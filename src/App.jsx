@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -10,10 +10,11 @@ const memberColor = (name, members) => {
   return COLORS[idx % COLORS.length];
 };
 
-// ── Settle Up Logic ───────────────────────────────────────────────────────────
-function computeBalances(members, expenses) {
+// ── Balance Logic (now includes advances) ────────────────────────────────────
+function computeBalances(members, expenses, advances) {
   const bal = {};
   members.forEach(m => bal[m.name] = 0);
+
   expenses.forEach(exp => {
     const perPerson = exp.amount / exp.splitAmong.length;
     exp.splitAmong.forEach(name => {
@@ -22,6 +23,13 @@ function computeBalances(members, expenses) {
     const othersShare = exp.splitAmong.filter(n => n !== exp.paidBy).length * perPerson;
     bal[exp.paidBy] = (bal[exp.paidBy] || 0) + othersShare;
   });
+
+  // Advances: "from" gave money to "to"
+  advances.forEach(adv => {
+    bal[adv.from] = (bal[adv.from] || 0) + adv.amount;
+    bal[adv.to]   = (bal[adv.to]   || 0) - adv.amount;
+  });
+
   return bal;
 }
 
@@ -29,7 +37,7 @@ function computeSettlements(balances) {
   const debtors = [], creditors = [];
   Object.entries(balances).forEach(([name, amt]) => {
     if (amt < -0.01) debtors.push({ name, amt });
-    if (amt > 0.01) creditors.push({ name, amt });
+    if (amt > 0.01)  creditors.push({ name, amt });
   });
   const settlements = [];
   let i = 0, j = 0;
@@ -38,8 +46,7 @@ function computeSettlements(balances) {
   while (i < d.length && j < c.length) {
     const pay = Math.min(-d[i].amt, c[j].amt);
     settlements.push({ from: d[i].name, to: c[j].name, amount: pay });
-    d[i].amt += pay;
-    c[j].amt -= pay;
+    d[i].amt += pay; c[j].amt -= pay;
     if (Math.abs(d[i].amt) < 0.01) i++;
     if (Math.abs(c[j].amt) < 0.01) j++;
   }
@@ -47,31 +54,33 @@ function computeSettlements(balances) {
 }
 
 const CATEGORIES = [
-  { id: "food", label: "Food & Drinks", icon: "🍔" },
-  { id: "travel", label: "Travel", icon: "✈️" },
-  { id: "stay", label: "Stay", icon: "🏨" },
-  { id: "fuel", label: "Fuel", icon: "⛽" },
-  { id: "shopping", label: "Shopping", icon: "🛍️" },
-  { id: "entertainment", label: "Entertainment", icon: "🎬" },
-  { id: "utilities", label: "Utilities", icon: "💡" },
-  { id: "other", label: "Other", icon: "📦" },
+  { id: "food",          label: "Food & Drinks",  icon: "🍔" },
+  { id: "travel",        label: "Travel",          icon: "✈️" },
+  { id: "stay",          label: "Stay",            icon: "🏨" },
+  { id: "fuel",          label: "Fuel",            icon: "⛽" },
+  { id: "shopping",      label: "Shopping",        icon: "🛍️" },
+  { id: "entertainment", label: "Entertainment",   icon: "🎬" },
+  { id: "utilities",     label: "Utilities",       icon: "💡" },
+  { id: "other",         label: "Other",           icon: "📦" },
 ];
 
-// ── Seed Data ──────────────────────────────────────────────────────────────
-const seedMembers = [
+const seedMembers  = [
   { id: uid(), name: "Arjun" },
   { id: uid(), name: "Priya" },
   { id: uid(), name: "Rohan" },
   { id: uid(), name: "Sneha" },
 ];
 const seedExpenses = [
-  { id: uid(), description: "Goa Hotel", amount: 8400, paidBy: "Arjun", splitAmong: ["Arjun","Priya","Rohan","Sneha"], category: "stay", date: "2025-03-01", notes: "" },
-  { id: uid(), description: "Flight Tickets", amount: 14000, paidBy: "Priya", splitAmong: ["Arjun","Priya","Rohan","Sneha"], category: "travel", date: "2025-03-01", notes: "" },
-  { id: uid(), description: "Beach Shack Dinner", amount: 3200, paidBy: "Rohan", splitAmong: ["Arjun","Priya","Rohan"], category: "food", date: "2025-03-02", notes: "" },
-  { id: uid(), description: "Scuba Diving", amount: 6000, paidBy: "Sneha", splitAmong: ["Priya","Rohan","Sneha"], category: "entertainment", date: "2025-03-02", notes: "" },
+  { id: uid(), description: "Goa Hotel",         amount: 8400,  paidBy: "Arjun", splitAmong: ["Arjun","Priya","Rohan","Sneha"], category: "stay",          date: "2025-03-01" },
+  { id: uid(), description: "Flight Tickets",    amount: 14000, paidBy: "Priya", splitAmong: ["Arjun","Priya","Rohan","Sneha"], category: "travel",        date: "2025-03-01" },
+  { id: uid(), description: "Beach Shack Dinner",amount: 3200,  paidBy: "Rohan", splitAmong: ["Arjun","Priya","Rohan"],         category: "food",          date: "2025-03-02" },
+  { id: uid(), description: "Scuba Diving",      amount: 6000,  paidBy: "Sneha", splitAmong: ["Priya","Rohan","Sneha"],         category: "entertainment", date: "2025-03-02" },
+];
+const seedAdvances = [
+  { id: uid(), from: "Rohan", to: "Arjun", amount: 2000, note: "Trip advance for booking", date: "2025-02-28" },
 ];
 
-// ── Components ────────────────────────────────────────────────────────────────
+// ── Reusable UI ───────────────────────────────────────────────────────────────
 function Avatar({ name, size = 36, members }) {
   const color = memberColor(name, members);
   return (
@@ -83,11 +92,11 @@ function Avatar({ name, size = 36, members }) {
 
 function Modal({ title, onClose, children }) {
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(10,12,20,0.85)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(6px)" }} onClick={onClose}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(10,12,20,0.88)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, backdropFilter: "blur(6px)" }} onClick={onClose}>
       <div style={{ background: "#13172a", border: "1px solid #2a3060", borderRadius: 20, padding: "28px 24px", width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,0.6)" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22 }}>
           <span style={{ fontSize: 17, fontWeight: 700, color: "#f0f4ff", fontFamily: "Poppins, sans-serif" }}>{title}</span>
-          <button onClick={onClose} style={{ background: "#1e2442", border: "none", borderRadius: 8, width: 32, height: 32, color: "#6a7aaa", fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+          <button onClick={onClose} style={{ background: "#1e2442", border: "none", borderRadius: 8, width: 32, height: 32, color: "#6a7aaa", fontSize: 16, cursor: "pointer" }}>✕</button>
         </div>
         {children}
       </div>
@@ -95,119 +104,141 @@ function Modal({ title, onClose, children }) {
   );
 }
 
-function Input({ label, ...props }) {
+function Field({ label, children }) {
   return (
     <div style={{ marginBottom: 16 }}>
-      {label && <div style={{ fontSize: 11, color: "#6a7aaa", letterSpacing: 1, marginBottom: 6, fontFamily: "Poppins, sans-serif", textTransform: "uppercase" }}>{label}</div>}
-      <input {...props} style={{ width: "100%", background: "#0d1124", border: "1px solid #2a3060", borderRadius: 10, padding: "10px 14px", color: "#f0f4ff", fontSize: 14, outline: "none", fontFamily: "Poppins, sans-serif", boxSizing: "border-box", ...props.style }} />
+      <div style={{ fontSize: 11, color: "#6a7aaa", letterSpacing: 1, marginBottom: 7, textTransform: "uppercase", fontFamily: "Poppins" }}>{label}</div>
+      {children}
     </div>
   );
 }
 
-// ── Main App ──────────────────────────────────────────────────────────────────
+function TextInput({ label, ...props }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {label && <div style={{ fontSize: 11, color: "#6a7aaa", letterSpacing: 1, marginBottom: 6, fontFamily: "Poppins", textTransform: "uppercase" }}>{label}</div>}
+      <input {...props} style={{ width: "100%", background: "#0d1124", border: "1px solid #2a3060", borderRadius: 10, padding: "10px 14px", color: "#f0f4ff", fontSize: 14, outline: "none", fontFamily: "Poppins", boxSizing: "border-box", ...props.style }} />
+    </div>
+  );
+}
+
+function PillBtn({ active, color, onClick, children }) {
+  return (
+    <button onClick={onClick} style={{ background: active ? (color || "#4D96FF") : "#1e2442", border: active ? "none" : "1px solid #2a3060", borderRadius: 8, padding: "6px 13px", color: active ? "#fff" : "#6a7aaa", fontSize: 12, cursor: "pointer", fontFamily: "Poppins", fontWeight: active ? 700 : 400, transition: "all 0.15s" }}>
+      {children}
+    </button>
+  );
+}
+
+function Btn({ children, onClick, gradient = "linear-gradient(135deg,#4D96FF,#6C63FF)", style = {} }) {
+  return (
+    <button onClick={onClick} style={{ width: "100%", background: gradient, border: "none", borderRadius: 12, padding: "13px", color: "#fff", fontSize: 15, cursor: "pointer", fontWeight: 700, fontFamily: "Poppins", ...style }}>
+      {children}
+    </button>
+  );
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
 export default function SplitApp() {
-  const [groups, setGroups] = useState([{ id: uid(), name: "Goa Trip 🏖️", members: seedMembers, expenses: seedExpenses, createdAt: new Date().toLocaleDateString() }]);
+  const [groups, setGroups] = useState([{
+    id: uid(), name: "Goa Trip 🏖️",
+    members: seedMembers, expenses: seedExpenses, advances: seedAdvances,
+    createdAt: new Date().toLocaleDateString()
+  }]);
   const [activeGroup, setActiveGroup] = useState(0);
-  const [tab, setTab] = useState("expenses");
-  const [showAddExpense, setShowAddExpense] = useState(false);
-  const [showAddMember, setShowAddMember] = useState(false);
-  const [showAddGroup, setShowAddGroup] = useState(false);
-  const [showSettle, setShowSettle] = useState(false);
-  const [settledTxns, setSettledTxns] = useState([]);
+  const [tab, setTab]     = useState("expenses");
   const [toast, setToast] = useState(null);
+  const [settledTxns, setSettledTxns] = useState([]);
 
-  // Add expense form state
-  const [form, setForm] = useState({ description: "", amount: "", paidBy: "", category: "food", date: new Date().toISOString().slice(0, 10), notes: "", splitAmong: [] });
-  const [newMember, setNewMember] = useState("");
-  const [newGroup, setNewGroup] = useState("");
+  const [showAddExpense, setShowAddExpense] = useState(false);
+  const [showAddAdvance, setShowAddAdvance] = useState(false);
+  const [showAddMember,  setShowAddMember]  = useState(false);
+  const [showAddGroup,   setShowAddGroup]   = useState(false);
 
-  const group = groups[activeGroup];
-  const members = group?.members || [];
-  const expenses = group?.expenses || [];
-  const balances = computeBalances(members, expenses);
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  const group    = groups[activeGroup] || groups[0];
+  const members  = group.members;
+  const expenses = group.expenses;
+  const advances = group.advances || [];
+
+  const blankExpense = () => ({ description: "", amount: "", paidBy: members[0]?.name || "", category: "food", date: today(), splitAmong: members.map(m => m.name) });
+  const blankAdvance = () => ({ from: members[0]?.name || "", to: members[1]?.name || "", amount: "", note: "", date: today() });
+
+  const [expForm,    setExpForm]    = useState(blankExpense());
+  const [advForm,    setAdvForm]    = useState(blankAdvance());
+  const [newMember,  setNewMember]  = useState("");
+  const [newGroup,   setNewGroup]   = useState("");
+
+  const balances    = computeBalances(members, expenses, advances);
   const settlements = computeSettlements(balances);
-  const totalSpent = expenses.reduce((s, e) => s + e.amount, 0);
+  const totalSpent  = expenses.reduce((s, e) => s + e.amount, 0);
+  const totalAdv    = advances.reduce((s, a) => s + a.amount, 0);
 
-  const showToast = (msg, type = "success") => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 2500);
-  };
-
-  const openAddExpense = () => {
-    setForm({ description: "", amount: "", paidBy: members[0]?.name || "", category: "food", date: new Date().toISOString().slice(0, 10), notes: "", splitAmong: members.map(m => m.name) });
-    setShowAddExpense(true);
-  };
+  const showToast = (msg, type = "success") => { setToast({ msg, type }); setTimeout(() => setToast(null), 2800); };
+  const updateGroup = (fn) => setGroups(prev => prev.map((g, i) => i === activeGroup ? fn(g) : g));
 
   const addExpense = () => {
-    if (!form.description || !form.amount || !form.paidBy || form.splitAmong.length === 0) { showToast("Fill all required fields!", "error"); return; }
-    const exp = { id: uid(), ...form, amount: parseFloat(form.amount) };
-    setGroups(prev => prev.map((g, i) => i === activeGroup ? { ...g, expenses: [exp, ...g.expenses] } : g));
-    setShowAddExpense(false);
-    showToast(`"${form.description}" added!`);
+    if (!expForm.description || !expForm.amount || !expForm.paidBy || expForm.splitAmong.length === 0)
+      return showToast("Fill all required fields!", "error");
+    updateGroup(g => ({ ...g, expenses: [{ id: uid(), ...expForm, amount: parseFloat(expForm.amount) }, ...g.expenses] }));
+    setShowAddExpense(false); showToast(`"${expForm.description}" added!`);
   };
 
-  const deleteExpense = (id) => {
-    setGroups(prev => prev.map((g, i) => i === activeGroup ? { ...g, expenses: g.expenses.filter(e => e.id !== id) } : g));
-    showToast("Expense removed", "warn");
+  const deleteExpense = (id) => { updateGroup(g => ({ ...g, expenses: g.expenses.filter(e => e.id !== id) })); showToast("Expense removed", "warn"); };
+
+  const addAdvance = () => {
+    if (!advForm.from || !advForm.to || !advForm.amount) return showToast("Fill all fields!", "error");
+    if (advForm.from === advForm.to) return showToast("From and To can't be the same!", "error");
+    updateGroup(g => ({ ...g, advances: [{ id: uid(), ...advForm, amount: parseFloat(advForm.amount) }, ...(g.advances || [])] }));
+    setShowAddAdvance(false); showToast(`Advance of ${fmt(parseFloat(advForm.amount))} recorded!`);
   };
+
+  const deleteAdvance = (id) => { updateGroup(g => ({ ...g, advances: (g.advances || []).filter(a => a.id !== id) })); showToast("Advance removed", "warn"); };
 
   const addMember = () => {
     if (!newMember.trim()) return;
-    const m = { id: uid(), name: newMember.trim() };
-    setGroups(prev => prev.map((g, i) => i === activeGroup ? { ...g, members: [...g.members, m] } : g));
-    setNewMember("");
-    setShowAddMember(false);
-    showToast(`${m.name} added to group!`);
+    updateGroup(g => ({ ...g, members: [...g.members, { id: uid(), name: newMember.trim() }] }));
+    setNewMember(""); setShowAddMember(false); showToast(`${newMember.trim()} added!`);
   };
 
   const addGroup = () => {
     if (!newGroup.trim()) return;
-    setGroups(prev => [...prev, { id: uid(), name: newGroup.trim(), members: [], expenses: [], createdAt: new Date().toLocaleDateString() }]);
-    setActiveGroup(groups.length);
-    setNewGroup("");
-    setShowAddGroup(false);
-    showToast("New group created!");
+    setGroups(prev => [...prev, { id: uid(), name: newGroup.trim(), members: [], expenses: [], advances: [], createdAt: new Date().toLocaleDateString() }]);
+    setActiveGroup(groups.length); setNewGroup(""); setShowAddGroup(false); showToast("New group created!");
   };
 
-  const markSettled = (txn) => {
-    setSettledTxns(prev => [...prev, txn.from + "->" + txn.to]);
-    showToast(`${txn.from} → ${txn.to} marked settled ✓`);
-  };
-
-  const toggleSplit = (name) => {
-    setForm(prev => ({ ...prev, splitAmong: prev.splitAmong.includes(name) ? prev.splitAmong.filter(n => n !== name) : [...prev.splitAmong, name] }));
-  };
-
-  const myBalance = (name) => balances[name] || 0;
+  const markSettled = (txn) => { setSettledTxns(prev => [...prev, txn.from + "->" + txn.to]); showToast(`${txn.from} → ${txn.to} marked settled ✓`); };
+  const openAddExpense = () => { setExpForm(blankExpense()); setShowAddExpense(true); };
+  const openAddAdvance = () => { setAdvForm(blankAdvance()); setShowAddAdvance(true); };
+  const toggleSplit = (name) => setExpForm(p => ({ ...p, splitAmong: p.splitAmong.includes(name) ? p.splitAmong.filter(n => n !== name) : [...p.splitAmong, name] }));
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0a0c16", fontFamily: "Poppins, sans-serif", color: "#f0f4ff", maxWidth: 480, margin: "0 auto", position: "relative", paddingBottom: 80 }}>
+    <div style={{ minHeight: "100vh", background: "#0a0c16", fontFamily: "Poppins, sans-serif", color: "#f0f4ff", maxWidth: 480, margin: "0 auto", paddingBottom: 90 }}>
       <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 
       {/* Toast */}
       {toast && (
-        <div style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", zIndex: 9999, background: toast.type === "error" ? "#ff4757ee" : toast.type === "warn" ? "#ffa502ee" : "#2ed573ee", borderRadius: 12, padding: "10px 20px", fontSize: 13, color: "#fff", fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", whiteSpace: "nowrap", animation: "slideDown 0.3s ease" }}>
+        <div style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", zIndex: 9999, background: toast.type === "error" ? "#ff4757ee" : toast.type === "warn" ? "#ffa502ee" : "#2ed573ee", borderRadius: 12, padding: "10px 22px", fontSize: 13, color: "#fff", fontWeight: 600, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", whiteSpace: "nowrap", animation: "slideDown 0.3s ease" }}>
           {toast.type === "success" ? "✓ " : toast.type === "error" ? "✗ " : "⚠ "}{toast.msg}
         </div>
       )}
 
       {/* Header */}
-      <div style={{ background: "linear-gradient(135deg, #1a1f3a 0%, #0f1226 100%)", padding: "20px 20px 0", borderBottom: "1px solid #1e2442" }}>
+      <div style={{ background: "linear-gradient(135deg,#1a1f3a 0%,#0f1226 100%)", padding: "20px 20px 0", borderBottom: "1px solid #1e2442" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 38, height: 38, borderRadius: 12, background: "linear-gradient(135deg, #FF6B6B, #FFD93D)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>✂</div>
+            <div style={{ width: 38, height: 38, borderRadius: 12, background: "linear-gradient(135deg,#FF6B6B,#FFD93D)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>✂</div>
             <div>
               <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: -0.5 }}>SplitSaathi</div>
               <div style={{ fontSize: 10, color: "#6a7aaa", letterSpacing: 1 }}>EXPENSE SPLITTER</div>
             </div>
           </div>
-          <button onClick={() => setShowAddGroup(true)} style={{ background: "#1e2442", border: "1px solid #2a3060", borderRadius: 10, padding: "7px 14px", color: "#4D96FF", fontSize: 12, cursor: "pointer", fontWeight: 600, fontFamily: "Poppins, sans-serif" }}>+ Group</button>
+          <button onClick={() => setShowAddGroup(true)} style={{ background: "#1e2442", border: "1px solid #2a3060", borderRadius: 10, padding: "7px 14px", color: "#4D96FF", fontSize: 12, cursor: "pointer", fontWeight: 600, fontFamily: "Poppins" }}>+ Group</button>
         </div>
-
-        {/* Group Tabs */}
         <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 1 }}>
           {groups.map((g, i) => (
-            <button key={g.id} onClick={() => { setActiveGroup(i); setTab("expenses"); }} style={{ background: activeGroup === i ? "#4D96FF" : "transparent", border: activeGroup === i ? "none" : "1px solid #2a3060", borderRadius: "10px 10px 0 0", padding: "8px 16px", color: activeGroup === i ? "#fff" : "#6a7aaa", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap", fontWeight: activeGroup === i ? 700 : 400, fontFamily: "Poppins, sans-serif", transition: "all 0.2s" }}>
+            <button key={g.id} onClick={() => { setActiveGroup(i); setTab("expenses"); }} style={{ background: activeGroup === i ? "#4D96FF" : "transparent", border: activeGroup === i ? "none" : "1px solid #2a3060", borderRadius: "10px 10px 0 0", padding: "8px 16px", color: activeGroup === i ? "#fff" : "#6a7aaa", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap", fontWeight: activeGroup === i ? 700 : 400, fontFamily: "Poppins" }}>
               {g.name}
             </button>
           ))}
@@ -215,120 +246,72 @@ export default function SplitApp() {
       </div>
 
       {/* Stats Bar */}
-      <div style={{ background: "#0f1226", padding: "14px 20px", display: "flex", gap: 12 }}>
+      <div style={{ background: "#0f1226", padding: "12px 16px", display: "flex", gap: 10, borderBottom: "1px solid #1e2442" }}>
         {[
           { label: "Total Spent", value: fmt(totalSpent), color: "#f0f4ff" },
-          { label: "Members", value: members.length, color: "#4D96FF" },
-          { label: "Expenses", value: expenses.length, color: "#FFD93D" },
+          { label: "Advances",    value: fmt(totalAdv),   color: "#FFD93D" },
+          { label: "Members",     value: members.length,  color: "#4D96FF" },
         ].map((s, i) => (
-          <div key={i} style={{ flex: 1, background: "#13172a", borderRadius: 12, padding: "10px 12px", textAlign: "center" }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: s.color }}>{s.value}</div>
+          <div key={i} style={{ flex: 1, background: "#13172a", borderRadius: 12, padding: "10px 10px", textAlign: "center" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: s.color }}>{s.value}</div>
             <div style={{ fontSize: 10, color: "#6a7aaa", marginTop: 2 }}>{s.label}</div>
           </div>
         ))}
       </div>
 
-      {/* Nav Tabs */}
-      <div style={{ display: "flex", background: "#0f1226", borderBottom: "1px solid #1e2442", padding: "0 20px" }}>
+      {/* Nav */}
+      <div style={{ display: "flex", background: "#0f1226", borderBottom: "1px solid #1e2442", padding: "0 8px" }}>
         {[
           { id: "expenses", label: "Expenses", icon: "📋" },
+          { id: "advances", label: "Advances", icon: "💰" },
           { id: "balances", label: "Balances", icon: "⚖️" },
-          { id: "settle", label: "Settle Up", icon: "💸" },
-          { id: "members", label: "Members", icon: "👥" },
+          { id: "settle",   label: "Settle",   icon: "💸" },
+          { id: "members",  label: "Members",  icon: "👥" },
         ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, background: "transparent", border: "none", borderBottom: tab === t.id ? "2px solid #4D96FF" : "2px solid transparent", padding: "12px 4px", color: tab === t.id ? "#4D96FF" : "#6a7aaa", fontSize: 11, cursor: "pointer", fontWeight: tab === t.id ? 700 : 400, fontFamily: "Poppins, sans-serif", transition: "all 0.2s", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-            <span>{t.icon}</span><span>{t.label}</span>
+          <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, background: "transparent", border: "none", borderBottom: tab === t.id ? "2px solid #4D96FF" : "2px solid transparent", padding: "11px 2px", color: tab === t.id ? "#4D96FF" : "#6a7aaa", fontSize: 10, cursor: "pointer", fontWeight: tab === t.id ? 700 : 400, fontFamily: "Poppins", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+            <span style={{ fontSize: 14 }}>{t.icon}</span><span>{t.label}</span>
           </button>
         ))}
       </div>
 
-      <div style={{ padding: "16px 16px" }}>
+      <div style={{ padding: 16 }}>
 
-        {/* EXPENSES TAB */}
+        {/* EXPENSES */}
         {tab === "expenses" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
               <span style={{ fontSize: 13, color: "#6a7aaa" }}>{expenses.length} expense{expenses.length !== 1 ? "s" : ""}</span>
-              <button onClick={openAddExpense} style={{ background: "linear-gradient(135deg, #4D96FF, #6C63FF)", border: "none", borderRadius: 12, padding: "9px 18px", color: "#fff", fontSize: 13, cursor: "pointer", fontWeight: 700, fontFamily: "Poppins, sans-serif", boxShadow: "0 4px 16px #4D96FF44" }}>+ Add Expense</button>
+              <button onClick={openAddExpense} style={{ background: "linear-gradient(135deg,#4D96FF,#6C63FF)", border: "none", borderRadius: 12, padding: "9px 18px", color: "#fff", fontSize: 13, cursor: "pointer", fontWeight: 700, fontFamily: "Poppins" }}>+ Add Expense</button>
             </div>
             {expenses.length === 0 ? (
               <div style={{ textAlign: "center", padding: "50px 0", color: "#3a4470" }}>
                 <div style={{ fontSize: 48, marginBottom: 12 }}>🧾</div>
                 <div style={{ fontSize: 15, fontWeight: 600 }}>No expenses yet</div>
-                <div style={{ fontSize: 12, marginTop: 6 }}>Add your first expense!</div>
               </div>
-            ) : (
-              expenses.map(exp => {
-                const cat = CATEGORIES.find(c => c.id === exp.category);
-                const perPerson = (exp.amount / exp.splitAmong.length).toFixed(2);
-                return (
-                  <div key={exp.id} style={{ background: "#13172a", border: "1px solid #1e2442", borderRadius: 16, padding: "14px 16px", marginBottom: 10, display: "flex", gap: 12, alignItems: "flex-start" }}>
-                    <div style={{ width: 42, height: 42, borderRadius: 12, background: "#1e2442", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>{cat?.icon || "📦"}</div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                        <div>
-                          <div style={{ fontSize: 14, fontWeight: 700 }}>{exp.description}</div>
-                          <div style={{ fontSize: 11, color: "#6a7aaa", marginTop: 2 }}>{exp.date} · Paid by <span style={{ color: memberColor(exp.paidBy, members) }}>{exp.paidBy}</span></div>
-                        </div>
-                        <div style={{ textAlign: "right", flexShrink: 0 }}>
-                          <div style={{ fontSize: 16, fontWeight: 800, color: "#FFD93D" }}>{fmt(exp.amount)}</div>
-                          <div style={{ fontSize: 10, color: "#6a7aaa" }}>{fmt(perPerson)}/person</div>
-                        </div>
+            ) : expenses.map(exp => {
+              const cat = CATEGORIES.find(c => c.id === exp.category);
+              return (
+                <div key={exp.id} style={{ background: "#13172a", border: "1px solid #1e2442", borderRadius: 16, padding: "14px 16px", marginBottom: 10, display: "flex", gap: 12 }}>
+                  <div style={{ width: 42, height: 42, borderRadius: 12, background: "#1e2442", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>{cat?.icon || "📦"}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 700 }}>{exp.description}</div>
+                        <div style={{ fontSize: 11, color: "#6a7aaa", marginTop: 2 }}>{exp.date} · Paid by <span style={{ color: memberColor(exp.paidBy, members) }}>{exp.paidBy}</span></div>
                       </div>
-                      <div style={{ display: "flex", gap: 4, marginTop: 8, flexWrap: "wrap", justifyContent: "space-between" }}>
-                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                          {exp.splitAmong.map(name => (
-                            <div key={name} style={{ background: memberColor(name, members) + "22", border: `1px solid ${memberColor(name, members)}44`, borderRadius: 6, padding: "2px 7px", fontSize: 10, color: memberColor(name, members), fontWeight: 600 }}>{name}</div>
-                          ))}
-                        </div>
-                        <button onClick={() => deleteExpense(exp.id)} style={{ background: "#ff475722", border: "none", borderRadius: 6, padding: "2px 8px", color: "#ff4757", fontSize: 11, cursor: "pointer", fontFamily: "Poppins" }}>✕</button>
+                      <div style={{ textAlign: "right", flexShrink: 0 }}>
+                        <div style={{ fontSize: 16, fontWeight: 800, color: "#FFD93D" }}>{fmt(exp.amount)}</div>
+                        <div style={{ fontSize: 10, color: "#6a7aaa" }}>{fmt(exp.amount / exp.splitAmong.length)}/person</div>
                       </div>
                     </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        )}
-
-        {/* BALANCES TAB */}
-        {tab === "balances" && (
-          <div>
-            <div style={{ fontSize: 13, color: "#6a7aaa", marginBottom: 14 }}>Who owes what</div>
-            {members.map(m => {
-              const bal = myBalance(m.name);
-              const isOwed = bal > 0.01;
-              const owes = bal < -0.01;
-              return (
-                <div key={m.id} style={{ background: "#13172a", border: `1px solid ${isOwed ? "#2ed57344" : owes ? "#ff475744" : "#1e2442"}`, borderRadius: 16, padding: "14px 16px", marginBottom: 10, display: "flex", alignItems: "center", gap: 12 }}>
-                  <Avatar name={m.name} members={members} size={44} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700 }}>{m.name}</div>
-                    <div style={{ fontSize: 11, color: "#6a7aaa", marginTop: 2 }}>
-                      {isOwed ? "gets back" : owes ? "owes" : "is settled up"}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                        {exp.splitAmong.map(name => (
+                          <span key={name} style={{ background: memberColor(name, members) + "22", border: `1px solid ${memberColor(name, members)}44`, borderRadius: 6, padding: "2px 7px", fontSize: 10, color: memberColor(name, members), fontWeight: 600 }}>{name}</span>
+                        ))}
+                      </div>
+                      <button onClick={() => deleteExpense(exp.id)} style={{ background: "#ff475722", border: "none", borderRadius: 6, padding: "2px 9px", color: "#ff4757", fontSize: 11, cursor: "pointer", fontFamily: "Poppins", flexShrink: 0 }}>✕</button>
                     </div>
-                  </div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: isOwed ? "#2ed573" : owes ? "#ff4757" : "#6a7aaa" }}>
-                    {isOwed ? "+" : owes ? "-" : ""}{Math.abs(bal) > 0.01 ? fmt(bal) : "₹0"}
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Spending breakdown */}
-            <div style={{ marginTop: 20, marginBottom: 10, fontSize: 13, color: "#6a7aaa" }}>Spending by category</div>
-            {CATEGORIES.map(cat => {
-              const total = expenses.filter(e => e.category === cat.id).reduce((s, e) => s + e.amount, 0);
-              if (!total) return null;
-              const pct = (total / totalSpent) * 100;
-              return (
-                <div key={cat.id} style={{ marginBottom: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <span style={{ fontSize: 12 }}>{cat.icon} {cat.label}</span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#FFD93D" }}>{fmt(total)}</span>
-                  </div>
-                  <div style={{ background: "#1e2442", borderRadius: 4, height: 6 }}>
-                    <div style={{ width: pct + "%", background: "linear-gradient(90deg, #4D96FF, #6C63FF)", borderRadius: 4, height: "100%", transition: "width 0.5s ease" }} />
                   </div>
                 </div>
               );
@@ -336,148 +319,16 @@ export default function SplitApp() {
           </div>
         )}
 
-        {/* SETTLE UP TAB */}
-        {tab === "settle" && (
+        {/* ADVANCES */}
+        {tab === "advances" && (
           <div>
-            <div style={{ fontSize: 13, color: "#6a7aaa", marginBottom: 14 }}>Minimum transactions to settle all debts</div>
-            {settlements.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 0", color: "#3a4470" }}>
-                <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
-                <div style={{ fontSize: 15, fontWeight: 600, color: "#2ed573" }}>All settled up!</div>
-                <div style={{ fontSize: 12, color: "#6a7aaa", marginTop: 6 }}>No pending payments</div>
+            <div style={{ background: "#1a2a1a", border: "1px solid #2ed57344", borderRadius: 14, padding: "12px 16px", marginBottom: 16, display: "flex", gap: 10 }}>
+              <span style={{ fontSize: 20 }}>💡</span>
+              <div style={{ fontSize: 12, color: "#a0e0b0", lineHeight: 1.7 }}>
+                <b>What is an Advance?</b><br />
+                Money given <b>before</b> a trip or expense. Example: Rohan gave ₹2000 to Arjun for hotel booking. This automatically adjusts final balances so nobody overpays.
               </div>
-            ) : (
-              settlements.map((s, i) => {
-                const key = s.from + "->" + s.to;
-                const done = settledTxns.includes(key);
-                return (
-                  <div key={i} style={{ background: done ? "#13172a" : "#13172a", border: `1px solid ${done ? "#2ed57344" : "#2a3060"}`, borderRadius: 16, padding: "16px", marginBottom: 10, opacity: done ? 0.5 : 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-                      <Avatar name={s.from} members={members} size={40} />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, color: "#6a7aaa" }}>needs to pay</div>
-                        <div style={{ fontSize: 20, fontWeight: 800, color: "#FF6B6B" }}>{fmt(s.amount)}</div>
-                      </div>
-                      <div style={{ fontSize: 22, color: "#4D96FF" }}>→</div>
-                      <Avatar name={s.to} members={members} size={40} />
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ fontSize: 13 }}>
-                        <span style={{ color: memberColor(s.from, members), fontWeight: 700 }}>{s.from}</span>
-                        <span style={{ color: "#6a7aaa" }}> pays </span>
-                        <span style={{ color: memberColor(s.to, members), fontWeight: 700 }}>{s.to}</span>
-                      </div>
-                      {!done ? (
-                        <button onClick={() => markSettled(s)} style={{ background: "linear-gradient(135deg, #2ed573, #1abc9c)", border: "none", borderRadius: 10, padding: "7px 16px", color: "#fff", fontSize: 12, cursor: "pointer", fontWeight: 700, fontFamily: "Poppins" }}>Mark Settled ✓</button>
-                      ) : (
-                        <span style={{ fontSize: 12, color: "#2ed573", fontWeight: 700 }}>✓ Settled</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        )}
-
-        {/* MEMBERS TAB */}
-        {tab === "members" && (
-          <div>
+            </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <span style={{ fontSize: 13, color: "#6a7aaa" }}>{members.length} member{members.length !== 1 ? "s" : ""}</span>
-              <button onClick={() => setShowAddMember(true)} style={{ background: "linear-gradient(135deg, #6C63FF, #4D96FF)", border: "none", borderRadius: 12, padding: "9px 18px", color: "#fff", fontSize: 13, cursor: "pointer", fontWeight: 700, fontFamily: "Poppins" }}>+ Add Member</button>
-            </div>
-            {members.map(m => {
-              const bal = myBalance(m.name);
-              const spent = expenses.filter(e => e.paidBy === m.name).reduce((s, e) => s + e.amount, 0);
-              return (
-                <div key={m.id} style={{ background: "#13172a", border: "1px solid #1e2442", borderRadius: 16, padding: "14px 16px", marginBottom: 10, display: "flex", gap: 12, alignItems: "center" }}>
-                  <Avatar name={m.name} members={members} size={48} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 15, fontWeight: 700 }}>{m.name}</div>
-                    <div style={{ fontSize: 11, color: "#6a7aaa", marginTop: 2 }}>Paid {fmt(spent)} total</div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: bal > 0.01 ? "#2ed573" : bal < -0.01 ? "#ff4757" : "#6a7aaa" }}>
-                      {bal > 0.01 ? "+" : ""}{Math.abs(bal) > 0.01 ? fmt(bal) : "₹0"}
-                    </div>
-                    <div style={{ fontSize: 10, color: "#6a7aaa" }}>{bal > 0.01 ? "gets back" : bal < -0.01 ? "owes" : "settled"}</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* FAB */}
-      {tab === "expenses" && (
-        <button onClick={openAddExpense} style={{ position: "fixed", bottom: 24, right: 24, width: 56, height: 56, borderRadius: "50%", background: "linear-gradient(135deg, #4D96FF, #6C63FF)", border: "none", color: "#fff", fontSize: 26, cursor: "pointer", boxShadow: "0 6px 20px #4D96FF66", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>+</button>
-      )}
-
-      {/* Add Expense Modal */}
-      {showAddExpense && (
-        <Modal title="Add Expense" onClose={() => setShowAddExpense(false)}>
-          <Input label="Description *" placeholder="e.g. Hotel booking" value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} />
-          <Input label="Amount (₹) *" type="number" placeholder="0.00" value={form.amount} onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} />
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: "#6a7aaa", letterSpacing: 1, marginBottom: 8, textTransform: "uppercase" }}>Category</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {CATEGORIES.map(c => (
-                <button key={c.id} onClick={() => setForm(p => ({ ...p, category: c.id }))} style={{ background: form.category === c.id ? "#4D96FF" : "#1e2442", border: form.category === c.id ? "none" : "1px solid #2a3060", borderRadius: 8, padding: "5px 10px", color: form.category === c.id ? "#fff" : "#6a7aaa", fontSize: 11, cursor: "pointer", fontFamily: "Poppins" }}>{c.icon} {c.label}</button>
-              ))}
-            </div>
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: "#6a7aaa", letterSpacing: 1, marginBottom: 8, textTransform: "uppercase" }}>Paid By *</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {members.map(m => (
-                <button key={m.id} onClick={() => setForm(p => ({ ...p, paidBy: m.name }))} style={{ background: form.paidBy === m.name ? memberColor(m.name, members) : "#1e2442", border: form.paidBy === m.name ? "none" : "1px solid #2a3060", borderRadius: 8, padding: "6px 12px", color: form.paidBy === m.name ? "#fff" : "#6a7aaa", fontSize: 12, cursor: "pointer", fontFamily: "Poppins", fontWeight: form.paidBy === m.name ? 700 : 400 }}>{m.name}</button>
-              ))}
-            </div>
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: "#6a7aaa", letterSpacing: 1, marginBottom: 8, textTransform: "uppercase" }}>Split Among *</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {members.map(m => (
-                <button key={m.id} onClick={() => toggleSplit(m.name)} style={{ background: form.splitAmong.includes(m.name) ? memberColor(m.name, members) + "44" : "#1e2442", border: `1px solid ${form.splitAmong.includes(m.name) ? memberColor(m.name, members) : "#2a3060"}`, borderRadius: 8, padding: "6px 12px", color: form.splitAmong.includes(m.name) ? memberColor(m.name, members) : "#6a7aaa", fontSize: 12, cursor: "pointer", fontFamily: "Poppins", fontWeight: 600 }}>
-                  {form.splitAmong.includes(m.name) ? "✓ " : ""}{m.name}
-                </button>
-              ))}
-            </div>
-            {form.splitAmong.length > 0 && form.amount && (
-              <div style={{ marginTop: 8, fontSize: 12, color: "#FFD93D", fontWeight: 600 }}>
-                ₹{(parseFloat(form.amount || 0) / form.splitAmong.length).toFixed(2)} per person
-              </div>
-            )}
-          </div>
-          <Input label="Date" type="date" value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} />
-          <button onClick={addExpense} style={{ width: "100%", background: "linear-gradient(135deg, #4D96FF, #6C63FF)", border: "none", borderRadius: 12, padding: "13px", color: "#fff", fontSize: 15, cursor: "pointer", fontWeight: 700, fontFamily: "Poppins", boxShadow: "0 4px 16px #4D96FF44" }}>Add Expense</button>
-        </Modal>
-      )}
-
-      {/* Add Member Modal */}
-      {showAddMember && (
-        <Modal title="Add Member" onClose={() => setShowAddMember(false)}>
-          <Input label="Name" placeholder="Enter name" value={newMember} onChange={e => setNewMember(e.target.value)} onKeyDown={e => e.key === "Enter" && addMember()} />
-          <button onClick={addMember} style={{ width: "100%", background: "linear-gradient(135deg, #6C63FF, #4D96FF)", border: "none", borderRadius: 12, padding: "13px", color: "#fff", fontSize: 15, cursor: "pointer", fontWeight: 700, fontFamily: "Poppins" }}>Add to Group</button>
-        </Modal>
-      )}
-
-      {/* Add Group Modal */}
-      {showAddGroup && (
-        <Modal title="New Group" onClose={() => setShowAddGroup(false)}>
-          <Input label="Group Name" placeholder="e.g. Manali Trip 🏔️" value={newGroup} onChange={e => setNewGroup(e.target.value)} onKeyDown={e => e.key === "Enter" && addGroup()} />
-          <button onClick={addGroup} style={{ width: "100%", background: "linear-gradient(135deg, #FF6B6B, #FF922B)", border: "none", borderRadius: 12, padding: "13px", color: "#fff", fontSize: 15, cursor: "pointer", fontWeight: 700, fontFamily: "Poppins" }}>Create Group</button>
-        </Modal>
-      )}
-
-      <style>{`
-        @keyframes slideDown { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
-        input[type=date]::-webkit-calendar-picker-indicator { filter: invert(0.5); }
-        * { -webkit-tap-highlight-color: transparent; }
-        ::-webkit-scrollbar { width: 3px; } ::-webkit-scrollbar-thumb { background: #1e2442; border-radius: 2px; }
-      `}</style>
-    </div>
-  );
-}
+              <span style={{ fontSize: 13, color: "#6a7aaa" }}>{advances.length} advance{advances.length !== 1 ? "s" : ""} · {fmt(totalAdv)} total</span>
+              <button onClick={openAddAdvance} style={{ background: "linear-gradient(135deg,#FFD93D,#FF922B)", border: "none", borderRadius: 12, padding: "9px 18px", color: "#fff", fontSize: 13, cursor: "pointer", fontWeight: 700, fontFamily: "Poppin
