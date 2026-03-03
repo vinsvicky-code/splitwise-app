@@ -1,4 +1,16 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+
+// ── localStorage helpers ──────────────────────────────────────────────────────
+const STORAGE_KEY = "splitsaathi_v1";
+function loadData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function saveData(data) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -64,21 +76,7 @@ const CATEGORIES = [
   { id: "other",         label: "Other",           icon: "📦" },
 ];
 
-const seedMembers  = [
-  { id: uid(), name: "Arjun" },
-  { id: uid(), name: "Priya" },
-  { id: uid(), name: "Rohan" },
-  { id: uid(), name: "Sneha" },
-];
-const seedExpenses = [
-  { id: uid(), description: "Goa Hotel",         amount: 8400,  paidBy: "Arjun", splitAmong: ["Arjun","Priya","Rohan","Sneha"], category: "stay",          date: "2025-03-01" },
-  { id: uid(), description: "Flight Tickets",    amount: 14000, paidBy: "Priya", splitAmong: ["Arjun","Priya","Rohan","Sneha"], category: "travel",        date: "2025-03-01" },
-  { id: uid(), description: "Beach Shack Dinner",amount: 3200,  paidBy: "Rohan", splitAmong: ["Arjun","Priya","Rohan"],         category: "food",          date: "2025-03-02" },
-  { id: uid(), description: "Scuba Diving",      amount: 6000,  paidBy: "Sneha", splitAmong: ["Priya","Rohan","Sneha"],         category: "entertainment", date: "2025-03-02" },
-];
-const seedAdvances = [
-  { id: uid(), from: "Rohan", to: "Arjun", amount: 2000, note: "Trip advance for booking", date: "2025-02-28" },
-];
+
 
 // ── Reusable UI ───────────────────────────────────────────────────────────────
 function Avatar({ name, size = 36, members }) {
@@ -140,15 +138,19 @@ function Btn({ children, onClick, gradient = "linear-gradient(135deg,#4D96FF,#6C
 
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function SplitApp() {
-  const [groups, setGroups] = useState([{
-    id: uid(), name: "Goa Trip 🏖️",
-    members: seedMembers, expenses: seedExpenses, advances: seedAdvances,
-    createdAt: new Date().toLocaleDateString()
-  }]);
-  const [activeGroup, setActiveGroup] = useState(0);
+  const defaultGroups = [];
+
+  const saved = loadData();
+  const [groups, setGroups] = useState(saved?.groups || defaultGroups);
+  const [activeGroup, setActiveGroup] = useState(saved?.activeGroup || 0);
+  const [settledTxns, setSettledTxns] = useState(saved?.settledTxns || []);
   const [tab, setTab]     = useState("expenses");
   const [toast, setToast] = useState(null);
-  const [settledTxns, setSettledTxns] = useState([]);
+
+  // 💾 Auto-save whenever data changes
+  useEffect(() => {
+    saveData({ groups, activeGroup, settledTxns });
+  }, [groups, activeGroup, settledTxns]);
 
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showAddAdvance, setShowAddAdvance] = useState(false);
@@ -158,9 +160,9 @@ export default function SplitApp() {
   const today = () => new Date().toISOString().slice(0, 10);
 
   const group    = groups[activeGroup] || groups[0];
-  const members  = group.members;
-  const expenses = group.expenses;
-  const advances = group.advances || [];
+  const members  = group?.members || [];
+  const expenses = group?.expenses || [];
+  const advances = group?.advances || [];
 
   const blankExpense = () => ({ description: "", amount: "", paidBy: members[0]?.name || "", category: "food", date: today(), splitAmong: members.map(m => m.name) });
   const blankAdvance = () => ({ from: members[0]?.name || "", to: members[1]?.name || "", amount: "", note: "", date: today() });
@@ -245,8 +247,22 @@ export default function SplitApp() {
         </div>
       </div>
 
+      {/* No Groups Welcome Screen */}
+      {groups.length === 0 && (
+        <div style={{ textAlign: "center", padding: "60px 24px" }}>
+          <div style={{ fontSize: 64, marginBottom: 16 }}>✂️</div>
+          <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 8 }}>Welcome to SplitSaathi!</div>
+          <div style={{ fontSize: 13, color: "#6a7aaa", marginBottom: 32, lineHeight: 1.7 }}>
+            Split expenses with friends &amp; family easily.<br />Start by creating your first group!
+          </div>
+          <button onClick={() => setShowAddGroup(true)} style={{ background: "linear-gradient(135deg,#FF6B6B,#FF922B)", border: "none", borderRadius: 14, padding: "14px 32px", color: "#fff", fontSize: 16, cursor: "pointer", fontWeight: 700, fontFamily: "Poppins", boxShadow: "0 6px 20px #FF6B6B44" }}>
+            + Create First Group
+          </button>
+        </div>
+      )}
+
       {/* Stats Bar */}
-      <div style={{ background: "#0f1226", padding: "12px 16px", display: "flex", gap: 10, borderBottom: "1px solid #1e2442" }}>
+      {groups.length > 0 && <div style={{ background: "#0f1226", padding: "12px 16px", display: "flex", gap: 10, borderBottom: "1px solid #1e2442" }}>
         {[
           { label: "Total Spent", value: fmt(totalSpent), color: "#f0f4ff" },
           { label: "Advances",    value: fmt(totalAdv),   color: "#FFD93D" },
@@ -257,10 +273,10 @@ export default function SplitApp() {
             <div style={{ fontSize: 10, color: "#6a7aaa", marginTop: 2 }}>{s.label}</div>
           </div>
         ))}
-      </div>
+      </div>}
 
       {/* Nav */}
-      <div style={{ display: "flex", background: "#0f1226", borderBottom: "1px solid #1e2442", padding: "0 8px" }}>
+      {groups.length > 0 && <div style={{ display: "flex", background: "#0f1226", borderBottom: "1px solid #1e2442", padding: "0 8px" }}>
         {[
           { id: "expenses", label: "Expenses", icon: "📋" },
           { id: "advances", label: "Advances", icon: "💰" },
@@ -272,9 +288,9 @@ export default function SplitApp() {
             <span style={{ fontSize: 14 }}>{t.icon}</span><span>{t.label}</span>
           </button>
         ))}
-      </div>
+      </div>}
 
-      <div style={{ padding: 16 }}>
+      {groups.length > 0 && <div style={{ padding: 16 }}>
 
         {/* EXPENSES */}
         {tab === "expenses" && (
@@ -477,7 +493,7 @@ export default function SplitApp() {
             })}
           </div>
         )}
-      </div>
+      </div>}
 
       {/* FABs */}
       {tab === "expenses" && (
@@ -568,6 +584,19 @@ export default function SplitApp() {
           <Btn onClick={addGroup} gradient="linear-gradient(135deg,#FF6B6B,#FF922B)">Create Group</Btn>
         </Modal>
       )}
+
+      {/* Footer */}
+      <div style={{ textAlign: "center", padding: "20px 16px 10px", color: "#2a3460", fontSize: 11 }}>
+        <div style={{ marginBottom: 6 }}>💾 Data saved automatically to your phone</div>
+        <button onClick={() => {
+          if (window.confirm("Clear ALL data? This cannot be undone.")) {
+            localStorage.removeItem(STORAGE_KEY);
+            window.location.reload();
+          }
+        }} style={{ background: "transparent", border: "1px solid #2a3060", borderRadius: 8, padding: "5px 14px", color: "#3a4470", fontSize: 11, cursor: "pointer", fontFamily: "Poppins" }}>
+          🗑 Clear All Data
+        </button>
+      </div>
 
       <style>{`
         @keyframes slideDown { from { opacity:0; transform:translateX(-50%) translateY(-10px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
