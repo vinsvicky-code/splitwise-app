@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+  getAuth, GoogleAuthProvider, signInWithRedirect,
+  getRedirectResult, signOut, onAuthStateChanged
 } from "firebase/auth";
 import {
   getFirestore, collection, doc, setDoc, getDoc, addDoc, updateDoc,
@@ -10,12 +11,12 @@ import {
 
 // ── Firebase Config ───────────────────────────────────────────────────────────
 const firebaseConfig = {
-  apiKey:            import.meta.env.VITE_API_KEY,
-  authDomain:        import.meta.env.VITE_AUTH_DOMAIN,
-  projectId:         import.meta.env.VITE_PROJECT_ID,
-  storageBucket:     import.meta.env.VITE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
-  appId:             import.meta.env.VITE_APP_ID
+  apiKey: "AIzaSyDEqOHVkn0GQU8vxf-8b00JJgyUKrq59Oo",
+  authDomain: "splitsaathi-1e6d7.firebaseapp.com",
+  projectId: "splitsaathi-1e6d7",
+  storageBucket: "splitsaathi-1e6d7.firebasestorage.app",
+  messagingSenderId: "261680595042",
+  appId: "1:261680595042:web:cb077cdd28fcf67a56513b"
 };
 
 const app  = initializeApp(firebaseConfig);
@@ -183,6 +184,11 @@ export default function SplitApp() {
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   useEffect(() => {
+    // Handle redirect result when user comes back after Google login
+    getRedirectResult(auth).then(async result => {
+      if (result?.user) await ensureUserDoc(result.user);
+    }).catch(e => showToast("Login error: " + e.message, "error"));
+
     return onAuthStateChanged(auth, async u => {
       setUser(u);
       setAuthLoading(false);
@@ -198,7 +204,8 @@ export default function SplitApp() {
   async function loginGoogle() {
     try {
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      await signInWithRedirect(auth, provider);
+      // Page will redirect to Google, then come back automatically
     } catch(e) { showToast("Login failed: " + e.message, "error"); }
   }
 
