@@ -11,12 +11,12 @@ import {
 
 // ── Firebase Config ───────────────────────────────────────────────────────────
 const firebaseConfig = {
-  apiKey: "AIzaSyDEqOHVkn0GQU8vxf-8b00JJgyUKrq59Oo",
-  authDomain: "splitsaathi-1e6d7.firebaseapp.com",
-  projectId: "splitsaathi-1e6d7",
-  storageBucket: "splitsaathi-1e6d7.firebasestorage.app",
-  messagingSenderId: "261680595042",
-  appId: "1:261680595042:web:cb077cdd28fcf67a56513b"
+  apiKey:            import.meta.env.VITE_API_KEY,
+  authDomain:        import.meta.env.VITE_AUTH_DOMAIN,
+  projectId:         import.meta.env.VITE_PROJECT_ID,
+  storageBucket:     import.meta.env.VITE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
+  appId:             import.meta.env.VITE_APP_ID
 };
 
 const app  = initializeApp(firebaseConfig);
