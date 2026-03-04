@@ -11,7 +11,7 @@ import {
 
 // ── Firebase Config ───────────────────────────────────────────────────────────
 const firebaseConfig = {
-  apiKey: "AIzaSyDEqOHVkn0GQU8vxf-8b00JJgyUKrq59Oo",
+  apiKey: "AlzaSyCWhUddC7JMmKOHp1uAdBCfBwmxSkFWC8M",
   authDomain: "splitsaathi-1e6d7.firebaseapp.com",
   projectId: "splitsaathi-1e6d7",
   storageBucket: "splitsaathi-1e6d7.firebasestorage.app",
