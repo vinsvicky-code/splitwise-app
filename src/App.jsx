@@ -400,6 +400,15 @@ export default function SplitApp() {
     showToast(name + " added!");
   }
 
+  async function addCloudMember(name) {
+    if (!name.trim()) return;
+    const newUid = "manual_" + uid();
+    await updateDoc(doc(db,"groups",activeGid), {
+      [`members.${newUid}`]: { uid: newUid, name: name.trim(), email: "", photo: null, role: "editor", manual: true }
+    });
+    showToast(name.trim() + " added!");
+  }
+
   // ── Expense Actions ───────────────────────────────────────────────────────
   function openAddExpense() {
     setExpForm({ description:"", amount:"", paidBy:gMembers[0]?.name||"", category:"food", date:today(), splitAmong:gMembers.map(m=>m.name) });
@@ -904,23 +913,25 @@ export default function SplitApp() {
                   </div>
                 )}
 
-                {/* Guest: add member manually */}
-                {isGuest && (
+                {/* Add member manually — both guest and cloud */}
+                {(isGuest || can.canManage) && (
                   <div style={{ background:"#13172a", border:"1px solid #2a3060", borderRadius:12, padding:"12px 13px", marginBottom:12 }}>
-                    <div style={{ fontSize:10, color:"#6a7aaa", marginBottom:8 }}>👤 ADD MEMBER</div>
+                    <div style={{ fontSize:10, color:"#6a7aaa", marginBottom:8 }}>👤 ADD MEMBER MANUALLY</div>
                     <div style={{ display:"flex", gap:6 }}>
-                      <input placeholder="Member name" value={newMemberName} onChange={e=>setNewMemberName(e.target.value)}
-                        onKeyDown={e=>e.key==="Enter"&&(addGuestMember(newMemberName),setNewMemberName(""))}
+                      <input placeholder="Member name e.g. Rahul" value={newMemberName} onChange={e=>setNewMemberName(e.target.value)}
+                        onKeyDown={e=>{ if(e.key==="Enter"){ isGuest?addGuestMember(newMemberName):addCloudMember(newMemberName); setNewMemberName(""); } }}
                         style={{ flex:1, background:"#0d1124", border:"1px solid #2a3060", borderRadius:8, padding:"9px 11px", color:"#f0f4ff", fontSize:13, outline:"none", fontFamily:"Poppins,sans-serif" }} />
-                      <button onClick={()=>{ addGuestMember(newMemberName); setNewMemberName(""); }} style={{ background:"#4D96FF", border:"none", borderRadius:8, padding:"0 14px", color:"#fff", fontSize:12, cursor:"pointer", fontWeight:700, fontFamily:"Poppins,sans-serif" }}>Add</button>
+                      <button onClick={()=>{ isGuest?addGuestMember(newMemberName):addCloudMember(newMemberName); setNewMemberName(""); }}
+                        style={{ background:"#4D96FF", border:"none", borderRadius:8, padding:"0 14px", color:"#fff", fontSize:12, cursor:"pointer", fontWeight:700, fontFamily:"Poppins,sans-serif" }}>Add</button>
                     </div>
+                    {!isGuest && <div style={{ fontSize:10, color:"#3a4470", marginTop:7 }}>💡 They can also join via invite link to sync their own data</div>}
                   </div>
                 )}
 
                 {displayMembers.length===0 ? (
                   <div style={{ textAlign:"center", padding:"30px 0", color:"#3a4470" }}>
                     <div style={{ fontSize:36, marginBottom:8 }}>👥</div>
-                    <div style={{ fontSize:13 }}>{isGuest?"Add members above":"Invite members via share link"}</div>
+                    <div style={{ fontSize:13 }}>Add members above or invite via link</div>
                   </div>
                 ) : displayMembers.map((m,i) => {
                   const role = ROLES[m.role]||ROLES.viewer;
