@@ -585,7 +585,7 @@ export default function SplitApp() {
               </div>
               {authError && <div style={{ marginBottom:10, background:"#ff475720", border:"1px solid #ff4757", borderRadius:10, padding:"9px 12px", fontSize:12, color:"#ff4757" }}>⚠️ {authError}</div>}
               <BigBtn onClick={sendMagicLink} disabled={authLoading2} grad="linear-gradient(135deg,#4D96FF,#6C63FF)">{authLoading2?"Sending...":"Send Magic Link 📧"}</BigBtn>
-              <div style={{ fontSize:11, color:"#3a4470", marginTop:10, textAlign:"center", lineHeight:1.6 }}>We'll email you a link — no password needed!</div>
+              <div style={{ fontSize:11, color:"#3a4470", marginTop:10, textAlign:"center", lineHeight:1.7 }}>We'll email you a link — no password needed!<br/>📂 Don't see it? Check your <span style={{ color:"#FFD93D" }}>spam/junk</span> folder.</div>
             </>
           )
         )}
