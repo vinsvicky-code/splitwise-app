@@ -11,12 +11,12 @@ import {
 
 // ── Firebase Config ───────────────────────────────────────────────────────────
 const firebaseConfig = {
-  apiKey:            import.meta.env.VITE_API_KEY,
-  authDomain:        import.meta.env.VITE_AUTH_DOMAIN,
-  projectId:         import.meta.env.VITE_PROJECT_ID,
-  storageBucket:     import.meta.env.VITE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
-  appId:             import.meta.env.VITE_APP_ID
+  apiKey: "AIzaSyDEqOHVkn0GQU8vxf-8b00JJgyUKrq59Oo",
+  authDomain: "splitsaathi-1e6d7.firebaseapp.com",
+  projectId: "splitsaathi-1e6d7",
+  storageBucket: "splitsaathi-1e6d7.firebasestorage.app",
+  messagingSenderId: "261680595042",
+  appId: "1:261680595042:web:cb077cdd28fcf67a56513b"
 };
 
 const app  = initializeApp(firebaseConfig);
@@ -147,6 +147,7 @@ function BigBtn({ children, onClick, grad="linear-gradient(135deg,#4D96FF,#6C63F
 export default function SplitApp() {
   const [user,         setUser]         = useState(null);
   const [authLoading,  setAuthLoading]  = useState(true);
+  const [errorMsg,     setErrorMsg]     = useState("");
   const [groups,       setGroups]       = useState([]);
   const [activeGid,    setActiveGid]    = useState(null);
   const [myRoles,      setMyRoles]      = useState({});   // { groupId: role }
@@ -184,16 +185,28 @@ export default function SplitApp() {
 
   // ── Auth ──────────────────────────────────────────────────────────────────
   useEffect(() => {
-    // Handle redirect result when user comes back after Google login
-    getRedirectResult(auth).then(async result => {
-      if (result?.user) await ensureUserDoc(result.user);
-    }).catch(e => showToast("Login error: " + e.message, "error"));
+    setAuthLoading(true);
 
-    return onAuthStateChanged(auth, async u => {
-      setUser(u);
-      setAuthLoading(false);
-      if (u) await ensureUserDoc(u);
-    });
+    // MUST call getRedirectResult first to capture Google login on return
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (result?.user) {
+          await ensureUserDoc(result.user);
+          setUser(result.user);
+        }
+      })
+      .catch((e) => {
+        setErrorMsg("Login error: " + e.message);
+        showToast("Login error: " + e.message, "error");
+      })
+      .finally(() => {
+        // Also listen to ongoing auth state
+        onAuthStateChanged(auth, async (u) => {
+          setUser(u);
+          setAuthLoading(false);
+          if (u) await ensureUserDoc(u);
+        });
+      });
   }, []);
 
   async function ensureUserDoc(u) {
@@ -203,10 +216,17 @@ export default function SplitApp() {
 
   async function loginGoogle() {
     try {
+      setErrorMsg("");
       const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
       await signInWithRedirect(auth, provider);
-      // Page will redirect to Google, then come back automatically
-    } catch(e) { showToast("Login failed: " + e.message, "error"); }
+    } catch(e) {
+      const msg = e.code === "auth/unauthorized-domain"
+        ? "Domain not authorized in Firebase. Add this domain in Firebase → Authentication → Settings → Authorized domains."
+        : "Login failed: " + e.message;
+      showToast(msg, "error");
+      setErrorMsg(msg);
+    }
   }
 
   async function logout() {
@@ -386,8 +406,13 @@ export default function SplitApp() {
 
   // ── Login Screen ──────────────────────────────────────────────────────────
   if (authLoading) return (
-    <div style={{ minHeight:"100vh", background:"#0a0c16", display:"flex", alignItems:"center", justifyContent:"center" }}>
-      <div style={{ color:"#4D96FF", fontSize:14, fontFamily:"Poppins,sans-serif" }}>Loading...</div>
+    <div style={{ minHeight:"100vh", background:"#0a0c16", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16 }}>
+      <div style={{ width:50, height:50, borderRadius:14, background:"linear-gradient(135deg,#FF6B6B,#FFD93D)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:26 }}>✂</div>
+      <div style={{ color:"#4D96FF", fontSize:14, fontFamily:"Poppins,sans-serif" }}>Signing you in...</div>
+      <div style={{ width:40, height:3, background:"#1e2442", borderRadius:2, overflow:"hidden" }}>
+        <div style={{ width:"100%", height:"100%", background:"#4D96FF", borderRadius:2, animation:"loading 1s infinite" }} />
+      </div>
+      <style>{`@keyframes loading { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }`}</style>
     </div>
   );
 
@@ -401,6 +426,11 @@ export default function SplitApp() {
         <img src="https://www.google.com/favicon.ico" width={20} height={20} alt="G" />
         Continue with Google
       </button>
+      {errorMsg && (
+        <div style={{ marginTop:20, background:"#ff475720", border:"1px solid #ff4757", borderRadius:12, padding:"12px 16px", fontSize:12, color:"#ff4757", textAlign:"center", maxWidth:320, lineHeight:1.6 }}>
+          ⚠️ {errorMsg}
+        </div>
+      )}
     </div>
   );
 
