@@ -605,8 +605,11 @@ export default function SplitApp() {
       ["From","To","Amount"],
       ...settlements2.map(s=>[s.from, s.to, fmt(s.amount)]),
     ];
-    const csv = rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("
-");
+    const csvRows = rows.map(r => r.map(c => {
+      const s = String(c === null || c === undefined ? "" : c);
+      return '"' + s.split('"').join('""') + '"';
+    }).join(","));
+    const csv = csvRows.join("\n");
     const blob = new Blob([csv], { type:"text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
