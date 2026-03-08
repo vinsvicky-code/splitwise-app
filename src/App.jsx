@@ -6,7 +6,7 @@ import {
   signOut, onAuthStateChanged, updateProfile
 } from "firebase/auth";
 import {
-  getFirestore, collection, doc, setDoc, addDoc, updateDoc,
+  getFirestore, collection, doc, setDoc, getDoc, addDoc, updateDoc,
   deleteDoc, onSnapshot, query, where, serverTimestamp
 } from "firebase/firestore";
 
@@ -367,7 +367,7 @@ export default function SplitApp() {
   }, [user]);
 
   async function joinGroup(gid, role) {
-    const snap = await import("firebase/firestore").then(m => m.getDoc(doc(db,"groups",gid)));
+    const snap = await getDoc(doc(db,"groups",gid));
     if (!snap.exists()) return showToast("Group not found!", "error");
     const data = snap.data();
     if (data.members?.[user.uid]) { showToast("Already in this group!"); return; }
@@ -571,6 +571,35 @@ export default function SplitApp() {
     showToast("Member removed","warn");
   }
 
+  async function renameMember(memberUid, oldName, newName) {
+    if (!newName.trim() || newName.trim() === oldName) { setEditingMember(null); return; }
+    const trimmed = newName.trim();
+    if (isGuest) {
+      // update name in members list
+      guestUpdateGroup(activeGid, g => ({
+        ...g,
+        members: (g.members||[]).map(m => m.uid===memberUid ? {...m, name:trimmed} : m),
+        // also update name in all expenses and advances
+        expenses: (g.expenses||[]).map(e => ({
+          ...e,
+          paidBy: e.paidBy===oldName ? trimmed : e.paidBy,
+          splitAmong: (e.splitAmong||[]).map(n => n===oldName ? trimmed : n),
+          customAmounts: e.customAmounts ? Object.fromEntries(Object.entries(e.customAmounts).map(([k,v]) => [k===oldName?trimmed:k, v])) : {}
+        })),
+        advances: (g.advances||[]).map(a => ({
+          ...a,
+          from: a.from===oldName ? trimmed : a.from,
+          to:   a.to===oldName   ? trimmed : a.to,
+        }))
+      }));
+    } else {
+      // update member name in group doc
+      await updateDoc(doc(db,"groups",activeGid), { [`members.${memberUid}.name`]: trimmed });
+    }
+    setEditingMember(null);
+    showToast(`Renamed to "${trimmed}" ✓`);
+  }
+
   const toggleSplit = (name) => setExpForm(p => ({ ...p, splitAmong: p.splitAmong?.includes(name) ? p.splitAmong.filter(n=>n!==name) : [...(p.splitAmong||[]), name] }));
 
   // ── Export CSV ───────────────────────────────────────────────────────────
@@ -629,7 +658,9 @@ export default function SplitApp() {
   const totalAdv2    = displayAdvances.reduce((s,a)=>s+a.amount,0);
 
   // ── Guest member add state ────────────────────────────────────────────────
-  const [newMemberName, setNewMemberName] = useState("");
+  const [newMemberName,  setNewMemberName]  = useState("");
+  const [editingMember,  setEditingMember]  = useState(null); // { uid, name, isGuest }
+  const [editMemberName, setEditMemberName] = useState("");
 
   // ── Auth Loading ──────────────────────────────────────────────────────────
   if (authLoading && !isGuest) return (
@@ -1045,26 +1076,50 @@ export default function SplitApp() {
                   </div>
                 ) : displayMembers.map((m,i) => {
                   const role = ROLES[m.role]||ROLES.viewer;
+                  const isEditingThis = editingMember?.uid === (m.uid||m.id);
                   return (
-                    <div key={m.uid||m.id||i} style={{ background:"#13172a", border:"1px solid #1e2442", borderRadius:14, padding:"11px 13px", marginBottom:7, display:"flex", gap:9, alignItems:"center" }}>
-                      <Av name={m.name} photo={m.photo} members={displayMembers} size={40} />
-                      <div style={{ flex:1 }}>
-                        <div style={{ fontSize:13, fontWeight:700 }}>{m.name}{m.uid===user?.uid?" (you)":""}</div>
-                        {!isGuest && <div style={{ fontSize:10, color:"#6a7aaa", marginTop:1 }}>{m.email}</div>}
-                        {!isGuest && can.canManage && m.uid!==user?.uid && (
-                          <div style={{ marginTop:5, display:"flex", gap:3, flexWrap:"wrap" }}>
-                            {Object.entries(ROLES).filter(([k])=>k!=="owner").map(([k,v]) => (
-                              <button key={k} onClick={()=>changeRole(m.uid,k)} style={{ background:m.role===k?"#4D96FF33":"#1e2442", border:`1px solid ${m.role===k?"#4D96FF":"#2a3060"}`, borderRadius:5, padding:"2px 7px", color:m.role===k?"#4D96FF":"#6a7aaa", fontSize:9, cursor:"pointer", fontFamily:"Poppins,sans-serif" }}>{v.icon} {v.label}</button>
-                            ))}
+                    <div key={m.uid||m.id||i} style={{ background:"#13172a", border:`1px solid ${isEditingThis?"#4D96FF":"#1e2442"}`, borderRadius:14, padding:"11px 13px", marginBottom:7 }}>
+                      {/* Inline rename input */}
+                      {isEditingThis ? (
+                        <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                          <Av name={m.name} photo={m.photo} members={displayMembers} size={34} />
+                          <input
+                            autoFocus
+                            value={editMemberName}
+                            onChange={e=>setEditMemberName(e.target.value)}
+                            onKeyDown={e=>{ if(e.key==="Enter") renameMember(m.uid||m.id, m.name, editMemberName); if(e.key==="Escape") setEditingMember(null); }}
+                            style={{ flex:1, background:"#0d1124", border:"1px solid #4D96FF", borderRadius:8, padding:"8px 11px", color:"#f0f4ff", fontSize:13, outline:"none", fontFamily:"Poppins,sans-serif" }}
+                          />
+                          <button onClick={()=>renameMember(m.uid||m.id, m.name, editMemberName)} style={{ background:"#2ed573", border:"none", borderRadius:7, padding:"7px 12px", color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"Poppins,sans-serif" }}>Save</button>
+                          <button onClick={()=>setEditingMember(null)} style={{ background:"#1e2442", border:"none", borderRadius:7, padding:"7px 10px", color:"#6a7aaa", fontSize:11, cursor:"pointer" }}>✕</button>
+                        </div>
+                      ) : (
+                        <div style={{ display:"flex", gap:9, alignItems:"center" }}>
+                          <Av name={m.name} photo={m.photo} members={displayMembers} size={40} />
+                          <div style={{ flex:1 }}>
+                            <div style={{ fontSize:13, fontWeight:700 }}>{m.name}{m.uid===user?.uid?" (you)":""}</div>
+                            {!isGuest && <div style={{ fontSize:10, color:"#6a7aaa", marginTop:1 }}>{m.email}</div>}
+                            {!isGuest && can.canManage && m.uid!==user?.uid && (
+                              <div style={{ marginTop:5, display:"flex", gap:3, flexWrap:"wrap" }}>
+                                {Object.entries(ROLES).filter(([k])=>k!=="owner").map(([k,v]) => (
+                                  <button key={k} onClick={()=>changeRole(m.uid,k)} style={{ background:m.role===k?"#4D96FF33":"#1e2442", border:`1px solid ${m.role===k?"#4D96FF":"#2a3060"}`, borderRadius:5, padding:"2px 7px", color:m.role===k?"#4D96FF":"#6a7aaa", fontSize:9, cursor:"pointer", fontFamily:"Poppins,sans-serif" }}>{v.icon} {v.label}</button>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5 }}>
-                        {!isGuest && <span style={{ fontSize:10, fontWeight:700, color:m.role==="owner"?"#FFD93D":m.role==="admin"?"#CC5DE8":"#4D96FF" }}>{role.icon} {role.label}</span>}
-                        {!isGuest && can.canManage && m.uid!==user?.uid && (
-                          <button onClick={()=>removeMember(m.uid)} style={{ background:"#ff475722", border:"none", borderRadius:5, padding:"2px 7px", color:"#ff4757", fontSize:9, cursor:"pointer" }}>Remove</button>
-                        )}
-                      </div>
+                          <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:5 }}>
+                            {!isGuest && <span style={{ fontSize:10, fontWeight:700, color:m.role==="owner"?"#FFD93D":m.role==="admin"?"#CC5DE8":"#4D96FF" }}>{role.icon} {role.label}</span>}
+                            <div style={{ display:"flex", gap:4 }}>
+                              {(isGuest || can.canManage) && (
+                                <button onClick={()=>{ setEditingMember({uid:m.uid||m.id, name:m.name}); setEditMemberName(m.name); }} style={{ background:"#4D96FF22", border:"none", borderRadius:5, padding:"2px 7px", color:"#4D96FF", fontSize:10, cursor:"pointer" }}>✏️</button>
+                              )}
+                              {!isGuest && can.canManage && m.uid!==user?.uid && (
+                                <button onClick={()=>removeMember(m.uid)} style={{ background:"#ff475722", border:"none", borderRadius:5, padding:"2px 7px", color:"#ff4757", fontSize:9, cursor:"pointer" }}>Remove</button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
