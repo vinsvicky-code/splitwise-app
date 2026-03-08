@@ -7,7 +7,7 @@ import {
 } from "firebase/auth";
 import {
   getFirestore, collection, doc, setDoc, getDoc, addDoc, updateDoc,
-  deleteDoc, onSnapshot, query, where, serverTimestamp
+  deleteDoc, getDocs, onSnapshot, query, where, serverTimestamp
 } from "firebase/firestore";
 
 // ── Firebase ──────────────────────────────────────────────────────────────────
@@ -593,8 +593,40 @@ export default function SplitApp() {
         }))
       }));
     } else {
-      // update member name in group doc
+      // 1. Update member name in group doc
       await updateDoc(doc(db,"groups",activeGid), { [`members.${memberUid}.name`]: trimmed });
+
+      // 2. Update all expenses that reference the old name
+      const expSnap = await getDocs(collection(db,"groups",activeGid,"expenses"));
+      const expUpdates = expSnap.docs
+        .filter(d => d.data().paidBy===oldName || (d.data().splitAmong||[]).includes(oldName) || d.data().customAmounts?.[oldName]!==undefined)
+        .map(d => {
+          const e = d.data();
+          const update = {};
+          if (e.paidBy === oldName) update.paidBy = trimmed;
+          if ((e.splitAmong||[]).includes(oldName))
+            update.splitAmong = e.splitAmong.map(n => n===oldName ? trimmed : n);
+          if (e.customAmounts?.[oldName] !== undefined) {
+            const newAmts = {};
+            Object.entries(e.customAmounts).forEach(([k,v]) => { newAmts[k===oldName?trimmed:k] = v; });
+            update.customAmounts = newAmts;
+          }
+          return updateDoc(doc(db,"groups",activeGid,"expenses",d.id), update);
+        });
+
+      // 3. Update all advances that reference the old name
+      const advSnap = await getDocs(collection(db,"groups",activeGid,"advances"));
+      const advUpdates = advSnap.docs
+        .filter(d => d.data().from===oldName || d.data().to===oldName)
+        .map(d => {
+          const a = d.data();
+          const update = {};
+          if (a.from === oldName) update.from = trimmed;
+          if (a.to   === oldName) update.to   = trimmed;
+          return updateDoc(doc(db,"groups",activeGid,"advances",d.id), update);
+        });
+
+      await Promise.all([...expUpdates, ...advUpdates]);
     }
     setEditingMember(null);
     showToast(`Renamed to "${trimmed}" ✓`);
