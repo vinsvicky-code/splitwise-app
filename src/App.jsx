@@ -61,9 +61,20 @@ function computeBalances(members, expenses, advances) {
   members.forEach(m => bal[m.name] = 0);
   expenses.forEach(exp => {
     if (!exp.splitAmong?.length) return;
-    const per = exp.amount / exp.splitAmong.length;
-    exp.splitAmong.forEach(n => { if (n !== exp.paidBy) bal[n] = (bal[n]||0) - per; });
-    bal[exp.paidBy] = (bal[exp.paidBy]||0) + exp.splitAmong.filter(n => n !== exp.paidBy).length * per;
+    // unequal split: customAmounts = { name: amount }
+    if (exp.splitMode === "unequal" && exp.customAmounts) {
+      Object.entries(exp.customAmounts).forEach(([name, amt]) => {
+        if (name !== exp.paidBy) bal[name] = (bal[name]||0) - amt;
+      });
+      const othersTotal = Object.entries(exp.customAmounts)
+        .filter(([n]) => n !== exp.paidBy)
+        .reduce((s,[,a]) => s + a, 0);
+      bal[exp.paidBy] = (bal[exp.paidBy]||0) + othersTotal;
+    } else {
+      const per = exp.amount / exp.splitAmong.length;
+      exp.splitAmong.forEach(n => { if (n !== exp.paidBy) bal[n] = (bal[n]||0) - per; });
+      bal[exp.paidBy] = (bal[exp.paidBy]||0) + exp.splitAmong.filter(n => n !== exp.paidBy).length * per;
+    }
   });
   (advances||[]).forEach(a => {
     bal[a.from] = (bal[a.from]||0) + a.amount;
@@ -162,9 +173,11 @@ export default function SplitApp() {
   const [loading,     setLoading]     = useState(false);
 
   // Modals
-  const [showExp,   setShowExp]   = useState(false);
-  const [showAdv,   setShowAdv]   = useState(false);
-  const [showGroup, setShowGroup] = useState(false);
+  const [showExp,      setShowExp]      = useState(false);
+  const [showAdv,      setShowAdv]      = useState(false);
+  const [showGroup,    setShowGroup]    = useState(false);
+  const [editingExp,   setEditingExp]   = useState(null); // expense being edited
+  const [editingAdv,   setEditingAdv]   = useState(null); // advance being edited
 
   // Forms
   const [expForm,   setExpForm]   = useState({});
@@ -411,22 +424,49 @@ export default function SplitApp() {
 
   // ── Expense Actions ───────────────────────────────────────────────────────
   function openAddExpense() {
-    setExpForm({ description:"", amount:"", paidBy:gMembers[0]?.name||"", category:"food", date:today(), splitAmong:gMembers.map(m=>m.name) });
+    const mems = isGuest ? (groups.find(g=>g.id===activeGid)?.members||[]) : gMembers;
+    setEditingExp(null);
+    setExpForm({ description:"", amount:"", paidBy:mems[0]?.name||"", category:"food", date:today(), splitAmong:mems.map(m=>m.name), splitMode:"equal", customAmounts:{} });
     setShowExp(true);
   }
 
-  async function addExpense() {
+  function openEditExpense(exp) {
+    setEditingExp(exp.id);
+    setExpForm({ ...exp, amount: String(exp.amount), splitMode: exp.splitMode||"equal", customAmounts: exp.customAmounts||{} });
+    setShowExp(true);
+  }
+
+  async function saveExpense() {
     if (!expForm.description||!expForm.amount||!expForm.paidBy||!expForm.splitAmong?.length)
       return showToast("Fill all required fields!","error");
-    const exp = { ...expForm, amount: parseFloat(expForm.amount) };
+    // validate unequal split
+    if (expForm.splitMode==="unequal") {
+      const total = Object.values(expForm.customAmounts||{}).reduce((s,a)=>s+parseFloat(a||0),0);
+      const amt = parseFloat(expForm.amount);
+      if (Math.abs(total - amt) > 0.5) return showToast(`Custom amounts (${fmt(total)}) must equal total (${fmt(amt)})!`,"error");
+    }
+    const exp = { ...expForm, amount: parseFloat(expForm.amount),
+      customAmounts: expForm.splitMode==="unequal"
+        ? Object.fromEntries(Object.entries(expForm.customAmounts||{}).map(([k,v])=>[k,parseFloat(v||0)]))
+        : {} };
     setLoading(true);
     if (isGuest) {
-      guestUpdateGroup(activeGid, g => ({ ...g, expenses: [{ id:uid(), ...exp }, ...(g.expenses||[])] }));
-      setShowExp(false); showToast(`"${exp.description}" added!`);
+      if (editingExp) {
+        guestUpdateGroup(activeGid, g => ({ ...g, expenses: (g.expenses||[]).map(e=>e.id===editingExp?{...e,...exp}:e) }));
+      } else {
+        guestUpdateGroup(activeGid, g => ({ ...g, expenses: [{ id:uid(), ...exp, createdAt: new Date().toISOString() }, ...(g.expenses||[])] }));
+      }
+      setShowExp(false); showToast(editingExp?"Expense updated!":'"'+exp.description+'" added!');
     } else {
       try {
-        await addDoc(collection(db,"groups",activeGid,"expenses"), { ...exp, addedBy:user.uid, createdAt:serverTimestamp() });
-        setShowExp(false); showToast(`"${exp.description}" added!`);
+        if (editingExp) {
+          await updateDoc(doc(db,"groups",activeGid,"expenses",editingExp), exp);
+          showToast("Expense updated!");
+        } else {
+          await addDoc(collection(db,"groups",activeGid,"expenses"), { ...exp, addedBy:user.uid, createdAt:serverTimestamp() });
+          showToast('"'+exp.description+'" added!');
+        }
+        setShowExp(false);
       } catch(e) { showToast("Error: "+e.message,"error"); }
     }
     setLoading(false);
@@ -443,23 +483,41 @@ export default function SplitApp() {
 
   // ── Advance Actions ───────────────────────────────────────────────────────
   function openAddAdvance() {
-    const others = gMembers.filter(m => m.name !== (user?.displayName||""));
-    setAdvForm({ from:gMembers[0]?.name||"", to:others[0]?.name||gMembers[1]?.name||"", amount:"", note:"", date:today() });
+    const mems = isGuest ? (groups.find(g=>g.id===activeGid)?.members||[]) : gMembers;
+    const others = mems.filter(m => m.name !== (user?.displayName||""));
+    setEditingAdv(null);
+    setAdvForm({ from:mems[0]?.name||"", to:others[0]?.name||mems[1]?.name||"", amount:"", note:"", date:today() });
     setShowAdv(true);
   }
 
-  async function addAdvance() {
+  function openEditAdvance(adv) {
+    setEditingAdv(adv.id);
+    setAdvForm({ ...adv, amount: String(adv.amount) });
+    setShowAdv(true);
+  }
+
+  async function saveAdvance() {
     if (!advForm.from||!advForm.to||!advForm.amount) return showToast("Fill all fields!","error");
     if (advForm.from===advForm.to) return showToast("From and To can't be same!","error");
     const adv = { ...advForm, amount: parseFloat(advForm.amount) };
     setLoading(true);
     if (isGuest) {
-      guestUpdateGroup(activeGid, g => ({ ...g, advances: [{ id:uid(), ...adv }, ...(g.advances||[])] }));
-      setShowAdv(false); showToast("Advance recorded!");
+      if (editingAdv) {
+        guestUpdateGroup(activeGid, g => ({ ...g, advances: (g.advances||[]).map(a=>a.id===editingAdv?{...a,...adv}:a) }));
+      } else {
+        guestUpdateGroup(activeGid, g => ({ ...g, advances: [{ id:uid(), ...adv, createdAt: new Date().toISOString() }, ...(g.advances||[])] }));
+      }
+      setShowAdv(false); showToast(editingAdv?"Advance updated!":"Advance recorded!");
     } else {
       try {
-        await addDoc(collection(db,"groups",activeGid,"advances"), { ...adv, addedBy:user.uid, createdAt:serverTimestamp() });
-        setShowAdv(false); showToast("Advance recorded!");
+        if (editingAdv) {
+          await updateDoc(doc(db,"groups",activeGid,"advances",editingAdv), adv);
+          showToast("Advance updated!");
+        } else {
+          await addDoc(collection(db,"groups",activeGid,"advances"), { ...adv, addedBy:user.uid, createdAt:serverTimestamp() });
+          showToast("Advance recorded!");
+        }
+        setShowAdv(false);
       } catch(e) { showToast("Error: "+e.message,"error"); }
     }
     setLoading(false);
@@ -515,9 +573,51 @@ export default function SplitApp() {
 
   const toggleSplit = (name) => setExpForm(p => ({ ...p, splitAmong: p.splitAmong?.includes(name) ? p.splitAmong.filter(n=>n!==name) : [...(p.splitAmong||[]), name] }));
 
+  // ── Export CSV ───────────────────────────────────────────────────────────
+  function exportCSV() {
+    const groupName = groups.find(g=>g.id===activeGid)?.name || "Group";
+    const rows = [
+      ["SplitSaathi Export - " + groupName],
+      ["Generated:", new Date().toLocaleDateString("en-IN")],
+      [],
+      ["EXPENSES"],
+      ["Date","Description","Category","Amount","Paid By","Split Among","Per Person"],
+      ...displayExpenses.map(e=>[
+        e.date, e.description,
+        CATEGORIES.find(c=>c.id===e.category)?.label||e.category,
+        e.amount,e.paidBy,
+        (e.splitAmong||[]).join(" | "),
+        e.splitMode==="unequal"?"Custom":fmt(e.amount/(e.splitAmong?.length||1))
+      ]),
+      [],
+      ["ADVANCES"],
+      ["Date","Note","From","To","Amount"],
+      ...displayAdvances.map(a=>[a.date, a.note||"Advance", a.from, a.to, a.amount]),
+      [],
+      ["BALANCES"],
+      ["Member","Status","Amount"],
+      ...displayMembers.map(m=>{
+        const b = balances2[m.name]||0;
+        return [m.name, b>0.01?"Gets Back":b<-0.01?"Owes":"Settled", fmt(Math.abs(b))];
+      }),
+      [],
+      ["SETTLEMENTS"],
+      ["From","To","Amount"],
+      ...settlements2.map(s=>[s.from, s.to, fmt(s.amount)]),
+    ];
+    const csv = rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("
+");
+    const blob = new Blob([csv], { type:"text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = groupName.replace(/\s+/g,"_")+"_SplitSaathi.csv";
+    a.click(); URL.revokeObjectURL(url);
+    showToast("Exported! Check your downloads 📥");
+  }
+
   // ── Guest Member state sync ───────────────────────────────────────────────
   const displayMembers = isGuest ? (groups.find(g=>g.id===activeGid)?.members||[]) : gMembers;
-  const displayExpenses = isGuest ? (groups.find(g=>g.id===activeGid)?.expenses||[]) : expenses;
+  const displayExpenses = (isGuest ? (groups.find(g=>g.id===activeGid)?.expenses||[]) : expenses).slice().sort((a,b)=>{ const ta=a.createdAt?.seconds||new Date(a.createdAt||0).getTime()/1000||0; const tb=b.createdAt?.seconds||new Date(b.createdAt||0).getTime()/1000||0; return tb-ta; });
   const displayAdvances = isGuest ? (groups.find(g=>g.id===activeGid)?.advances||[]) : advances;
   const displaySettled  = isGuest ? (groups.find(g=>g.id===activeGid)?.settledTxns||[]) : settledTxns;
   const balances2    = computeBalances(displayMembers, displayExpenses, displayAdvances);
@@ -663,6 +763,7 @@ export default function SplitApp() {
             {activeGid && !isGuest && can.canManage && (
               <button onClick={()=>{ generateLink(shareRole); }} style={{ background:"#1e2442", border:"1px solid #2a3060", borderRadius:8, padding:"5px 10px", color:"#4D96FF", fontSize:10, cursor:"pointer", fontWeight:600 }}>🔗 Share</button>
             )}
+            {activeGid && <button onClick={exportCSV} style={{ background:"#1e2442", border:"1px solid #2a3060", borderRadius:8, padding:"5px 10px", color:"#2ed573", fontSize:10, cursor:"pointer", fontWeight:600 }}>📥 Export</button>}
             <button onClick={()=>setShowGroup(true)} style={{ background:"#1e2442", border:"1px solid #2a3060", borderRadius:8, padding:"5px 10px", color:"#FFD93D", fontSize:10, cursor:"pointer", fontWeight:600 }}>+ Group</button>
             <button onClick={logout} style={{ background:"#ff475722", border:"1px solid #ff475744", borderRadius:8, padding:"5px 10px", color:"#ff4757", fontSize:10, cursor:"pointer", fontWeight:600 }}>Exit</button>
           </div>
@@ -752,7 +853,7 @@ export default function SplitApp() {
                           </div>
                           <div style={{ textAlign:"right", flexShrink:0 }}>
                             <div style={{ fontSize:14, fontWeight:800, color:"#FFD93D" }}>{fmt(exp.amount)}</div>
-                            <div style={{ fontSize:9, color:"#6a7aaa" }}>{fmt(exp.amount/(exp.splitAmong?.length||1))}/person</div>
+                            <div style={{ fontSize:9, color:"#6a7aaa" }}>{exp.splitMode==="unequal"?"custom split":fmt(exp.amount/(exp.splitAmong?.length||1))+"/person"}</div>
                           </div>
                         </div>
                         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6 }}>
@@ -761,7 +862,10 @@ export default function SplitApp() {
                               <span key={name} style={{ background:mColor(name,displayMembers)+"22", border:`1px solid ${mColor(name,displayMembers)}44`, borderRadius:5, padding:"1px 5px", fontSize:9, color:mColor(name,displayMembers), fontWeight:600 }}>{name}</span>
                             ))}
                           </div>
-                          {can.canDelete && <button onClick={()=>deleteExpense(exp.id)} style={{ background:"#ff475722", border:"none", borderRadius:5, padding:"2px 7px", color:"#ff4757", fontSize:10, cursor:"pointer", flexShrink:0 }}>✕</button>}
+                          <div style={{ display:"flex", gap:4, flexShrink:0 }}>
+                            {can.canEdit && <button onClick={()=>openEditExpense(exp)} style={{ background:"#4D96FF22", border:"none", borderRadius:5, padding:"2px 7px", color:"#4D96FF", fontSize:10, cursor:"pointer" }}>✏️</button>}
+                            {can.canDelete && <button onClick={()=>deleteExpense(exp.id)} style={{ background:"#ff475722", border:"none", borderRadius:5, padding:"2px 7px", color:"#ff4757", fontSize:10, cursor:"pointer" }}>✕</button>}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -801,7 +905,10 @@ export default function SplitApp() {
                         <Av name={adv.to} members={displayMembers} size={22} />
                         <span style={{ color:mColor(adv.to,displayMembers), fontWeight:700 }}>{adv.to}</span>
                       </div>
-                      {can.canDelete && <button onClick={()=>deleteAdvance(adv.id)} style={{ background:"#ff475722", border:"none", borderRadius:5, padding:"2px 7px", color:"#ff4757", fontSize:10, cursor:"pointer" }}>✕</button>}
+                      <div style={{ display:"flex", gap:4 }}>
+                        {can.canEdit && <button onClick={()=>openEditAdvance(adv)} style={{ background:"#FFD93D22", border:"none", borderRadius:5, padding:"2px 7px", color:"#FFD93D", fontSize:10, cursor:"pointer" }}>✏️</button>}
+                        {can.canDelete && <button onClick={()=>deleteAdvance(adv.id)} style={{ background:"#ff475722", border:"none", borderRadius:5, padding:"2px 7px", color:"#ff4757", fontSize:10, cursor:"pointer" }}>✕</button>}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -972,9 +1079,9 @@ export default function SplitApp() {
         <button onClick={openAddAdvance} style={{ position:"fixed", bottom:24, right:20, width:50, height:50, borderRadius:"50%", background:"linear-gradient(135deg,#FFD93D,#FF922B)", border:"none", color:"#fff", fontSize:26, cursor:"pointer", boxShadow:"0 6px 20px #FFD93D66", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100 }}>+</button>
       )}
 
-      {/* ADD EXPENSE MODAL */}
+      {/* ADD/EDIT EXPENSE MODAL */}
       {showExp && (
-        <Modal title="➕ Add Expense" onClose={()=>setShowExp(false)}>
+        <Modal title={editingExp ? "✏️ Edit Expense" : "➕ Add Expense"} onClose={()=>setShowExp(false)}>
           <TInput label="Description *" placeholder="e.g. Hotel booking" value={expForm.description||""} onChange={e=>setExpForm(p=>({...p,description:e.target.value}))} />
           <TInput label="Amount (₹) *" type="number" placeholder="0.00" value={expForm.amount||""} onChange={e=>setExpForm(p=>({...p,amount:e.target.value}))} />
           <Field label="Category">
@@ -987,26 +1094,84 @@ export default function SplitApp() {
               {displayMembers.map(m=><Pill key={m.uid||m.id} active={expForm.paidBy===m.name} color={mColor(m.name,displayMembers)} onClick={()=>setExpForm(p=>({...p,paidBy:m.name}))}>{m.name}</Pill>)}
             </div>
           </Field>
-          <Field label="Split Among *">
-            <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
-              {displayMembers.map(m=>(
-                <button key={m.uid||m.id} onClick={()=>toggleSplit(m.name)} style={{ background:expForm.splitAmong?.includes(m.name)?mColor(m.name,displayMembers)+"44":"#1e2442", border:`1px solid ${expForm.splitAmong?.includes(m.name)?mColor(m.name,displayMembers):"#2a3060"}`, borderRadius:8, padding:"5px 11px", color:expForm.splitAmong?.includes(m.name)?mColor(m.name,displayMembers):"#6a7aaa", fontSize:11, cursor:"pointer", fontFamily:"Poppins,sans-serif", fontWeight:600 }}>
-                  {expForm.splitAmong?.includes(m.name)?"✓ ":""}{m.name}
-                </button>
-              ))}
+
+          {/* Split Mode Toggle */}
+          <Field label="Split Type">
+            <div style={{ display:"flex", gap:6 }}>
+              <button onClick={()=>setExpForm(p=>({ ...p, splitMode:"equal", splitAmong: displayMembers.map(m=>m.name), customAmounts:{} }))} style={{ flex:1, background:expForm.splitMode!=="unequal"?"#4D96FF":"#1e2442", border:"none", borderRadius:8, padding:"9px", color:expForm.splitMode!=="unequal"?"#fff":"#6a7aaa", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"Poppins,sans-serif" }}>⚖️ Equal</button>
+              <button onClick={()=>setExpForm(p=>({ ...p, splitMode:"unequal", customAmounts: Object.fromEntries(displayMembers.map(m=>[m.name,""])) }))} style={{ flex:1, background:expForm.splitMode==="unequal"?"#FF922B":"#1e2442", border:"none", borderRadius:8, padding:"9px", color:expForm.splitMode==="unequal"?"#fff":"#6a7aaa", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"Poppins,sans-serif" }}>✏️ Unequal</button>
             </div>
-            {expForm.splitAmong?.length>0 && expForm.amount && (
-              <div style={{ marginTop:7, fontSize:11, color:"#FFD93D", fontWeight:600 }}>{fmt(parseFloat(expForm.amount||0)/expForm.splitAmong.length)} per person</div>
-            )}
           </Field>
+
+          {/* Equal Split */}
+          {expForm.splitMode !== "unequal" && (
+            <Field label="Split Among *">
+              <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
+                {displayMembers.map(m=>(
+                  <button key={m.uid||m.id} onClick={()=>toggleSplit(m.name)} style={{ background:expForm.splitAmong?.includes(m.name)?mColor(m.name,displayMembers)+"44":"#1e2442", border:`1px solid ${expForm.splitAmong?.includes(m.name)?mColor(m.name,displayMembers):"#2a3060"}`, borderRadius:8, padding:"5px 11px", color:expForm.splitAmong?.includes(m.name)?mColor(m.name,displayMembers):"#6a7aaa", fontSize:11, cursor:"pointer", fontFamily:"Poppins,sans-serif", fontWeight:600 }}>
+                    {expForm.splitAmong?.includes(m.name)?"✓ ":""}{m.name}
+                  </button>
+                ))}
+              </div>
+              {expForm.splitAmong?.length>0 && expForm.amount && (
+                <div style={{ marginTop:8, background:"#1e2442", borderRadius:8, padding:"7px 12px", fontSize:11, color:"#FFD93D", fontWeight:700, textAlign:"center" }}>
+                  ⚖️ {fmt(parseFloat(expForm.amount||0)/expForm.splitAmong.length)} per person × {expForm.splitAmong.length} people
+                </div>
+              )}
+            </Field>
+          )}
+
+          {/* Unequal Split */}
+          {expForm.splitMode === "unequal" && (
+            <Field label="Custom Amounts *">
+              <div style={{ background:"#0d1124", borderRadius:10, padding:"10px", marginBottom:8 }}>
+                {displayMembers.map(m => {
+                  const val = expForm.customAmounts?.[m.name] || "";
+                  const active = parseFloat(val||0) > 0;
+                  return (
+                    <div key={m.uid||m.id} style={{ display:"flex", alignItems:"center", gap:9, marginBottom:9 }}>
+                      <div style={{ width:30, height:30, borderRadius:"50%", background:active?mColor(m.name,displayMembers)+"44":"#1e2442", border:`2px solid ${active?mColor(m.name,displayMembers):"#2a3060"}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:active?mColor(m.name,displayMembers):"#6a7aaa", flexShrink:0, transition:"all 0.15s" }}>{avTx(m.name)}</div>
+                      <span style={{ flex:1, fontSize:12, fontWeight:600, color:active?"#f0f4ff":"#6a7aaa" }}>{m.name}</span>
+                      <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                        <span style={{ fontSize:12, color:"#6a7aaa" }}>₹</span>
+                        <input type="number" placeholder="0.00" value={val}
+                          onChange={e=>{
+                            const newAmts = {...(expForm.customAmounts||{}), [m.name]: e.target.value};
+                            const included = Object.keys(newAmts).filter(k=>parseFloat(newAmts[k]||0)>0);
+                            setExpForm(p=>({...p, customAmounts:newAmts, splitAmong:included}));
+                          }}
+                          style={{ width:85, background:"#13172a", border:`1px solid ${active?mColor(m.name,displayMembers):"#2a3060"}`, borderRadius:8, padding:"7px 9px", color:"#FFD93D", fontSize:13, fontWeight:700, outline:"none", fontFamily:"Poppins,sans-serif", textAlign:"right" }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {(() => {
+                const total = Object.values(expForm.customAmounts||{}).reduce((s,a)=>s+parseFloat(a||0),0);
+                const amt = parseFloat(expForm.amount||0);
+                const diff = amt - total;
+                const ok = Math.abs(diff) < 0.5;
+                return (
+                  <div style={{ background:ok?"#1a2a1a":"#1a1224", border:`1px solid ${ok?"#2ed573":"#CC5DE8"}55`, borderRadius:9, padding:"9px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <span style={{ fontSize:11, color:"#6a7aaa" }}>Total entered</span>
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ fontSize:13, fontWeight:800, color:ok?"#2ed573":"#CC5DE8" }}>{fmt(total)}</div>
+                      {!ok && <div style={{ fontSize:10, color:"#CC5DE8" }}>{diff>0?`₹${diff.toFixed(2)} remaining`:`₹${Math.abs(diff).toFixed(2)} over`}</div>}
+                      {ok && <div style={{ fontSize:10, color:"#2ed573" }}>✓ Matches total!</div>}
+                    </div>
+                  </div>
+                );
+              })()}
+            </Field>
+          )}
           <TInput label="Date" type="date" value={expForm.date||today()} onChange={e=>setExpForm(p=>({...p,date:e.target.value}))} />
-          <BigBtn onClick={addExpense} disabled={loading}>{loading?"Saving...":"Add Expense"}</BigBtn>
+          <BigBtn onClick={saveExpense} disabled={loading}>{loading?"Saving...":(editingExp?"Update Expense ✓":"Add Expense")}</BigBtn>
         </Modal>
       )}
 
-      {/* ADD ADVANCE MODAL */}
+      {/* ADD/EDIT ADVANCE MODAL */}
       {showAdv && (
-        <Modal title="💰 Record Advance" onClose={()=>setShowAdv(false)}>
+        <Modal title={editingAdv ? "✏️ Edit Advance" : "💰 Record Advance"} onClose={()=>setShowAdv(false)}>
           <div style={{ background:"#1a2a1a", border:"1px solid #2ed57333", borderRadius:10, padding:"9px 12px", marginBottom:13, fontSize:11, color:"#a0e0b0", lineHeight:1.6 }}>
             Record money given before actual expense. Automatically reduces their share in settlement.
           </div>
@@ -1032,7 +1197,7 @@ export default function SplitApp() {
               <span style={{ color:mColor(advForm.to,displayMembers), fontWeight:700 }}>{advForm.to}</span>
             </div>
           )}
-          <BigBtn onClick={addAdvance} grad="linear-gradient(135deg,#FFD93D,#FF922B)" disabled={loading}>{loading?"Saving...":"Record Advance 💰"}</BigBtn>
+          <BigBtn onClick={saveAdvance} grad="linear-gradient(135deg,#FFD93D,#FF922B)" disabled={loading}>{loading?"Saving...":(editingAdv?"Update Advance ✓":"Record Advance 💰")}</BigBtn>
         </Modal>
       )}
 
