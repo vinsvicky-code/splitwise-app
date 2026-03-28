@@ -947,6 +947,80 @@ export default function SplitApp() {
                   <span style={{ fontSize:16 }}>💡</span>
                   <div style={{ fontSize:11, color:"#a0e0b0", lineHeight:1.6 }}>Record money given <b>before</b> a trip. Auto-adjusts final balances.</div>
                 </div>
+
+                {/* ── Advance Summary ── */}
+                {displayAdvances.length > 0 && (() => {
+                  const gave     = {};
+                  const received = {};
+                  displayMembers.forEach(m => { gave[m.name] = 0; received[m.name] = 0; });
+                  displayAdvances.forEach(a => {
+                    gave[a.from]     = (gave[a.from]    ||0) + a.amount;
+                    received[a.to]   = (received[a.to]  ||0) + a.amount;
+                  });
+                  const maxGave = Math.max(...Object.values(gave), 1);
+                  const maxRcvd = Math.max(...Object.values(received), 1);
+                  const activeMembers = displayMembers.filter(m => gave[m.name] > 0 || received[m.name] > 0);
+                  return (
+                    <>
+                      {/* Total summary */}
+                      <div style={{ display:"flex", gap:7, marginBottom:14 }}>
+                        {[
+                          { label:"Total Advances", value:fmt(totalAdv2),                          color:"#FFD93D", icon:"💰" },
+                          { label:"No. of entries",  value:displayAdvances.length+" entries",       color:"#4D96FF", icon:"📋" },
+                        ].map((s,i) => (
+                          <div key={i} style={{ flex:1, background:"#13172a", border:"1px solid #1e2442", borderRadius:12, padding:"10px 12px", textAlign:"center" }}>
+                            <div style={{ fontSize:18, marginBottom:4 }}>{s.icon}</div>
+                            <div style={{ fontSize:13, fontWeight:800, color:s.color }}>{s.value}</div>
+                            <div style={{ fontSize:9, color:"#6a7aaa", marginTop:2 }}>{s.label}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Who gave */}
+                      <div style={{ fontSize:11, fontWeight:700, color:"#6a7aaa", letterSpacing:1, marginBottom:8 }}>💸 WHO GAVE</div>
+                      {activeMembers.filter(m => gave[m.name] > 0).map((m,i) => {
+                        const g = gave[m.name];
+                        const pct = (g / maxGave) * 100;
+                        return (
+                          <div key={i} style={{ background:"#13172a", border:"1px solid #1e2442", borderRadius:12, padding:"10px 12px", marginBottom:7 }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:7 }}>
+                              <Av name={m.name} photo={m.photo} members={displayMembers} size={30} />
+                              <span style={{ flex:1, fontSize:12, fontWeight:700 }}>{m.name}{m.uid===user?.uid?" (you)":""}</span>
+                              <span style={{ fontSize:13, fontWeight:800, color:"#2ed573" }}>+{fmt(g)}</span>
+                            </div>
+                            <div style={{ background:"#1e2442", borderRadius:4, height:6 }}>
+                              <div style={{ width:pct+"%", background:"linear-gradient(90deg,#2ed573,#20C997)", borderRadius:4, height:"100%", transition:"width 0.4s ease" }} />
+                            </div>
+                            <div style={{ fontSize:9, color:"#6a7aaa", marginTop:4 }}>{totalAdv2>0?((g/totalAdv2)*100).toFixed(1):0}% of total advances</div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Who received */}
+                      <div style={{ fontSize:11, fontWeight:700, color:"#6a7aaa", letterSpacing:1, margin:"14px 0 8px" }}>📥 WHO RECEIVED</div>
+                      {activeMembers.filter(m => received[m.name] > 0).map((m,i) => {
+                        const r = received[m.name];
+                        const pct = (r / maxRcvd) * 100;
+                        return (
+                          <div key={i} style={{ background:"#13172a", border:"1px solid #1e2442", borderRadius:12, padding:"10px 12px", marginBottom:7 }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:7 }}>
+                              <Av name={m.name} photo={m.photo} members={displayMembers} size={30} />
+                              <span style={{ flex:1, fontSize:12, fontWeight:700 }}>{m.name}{m.uid===user?.uid?" (you)":""}</span>
+                              <span style={{ fontSize:13, fontWeight:800, color:"#FF922B" }}>{fmt(r)}</span>
+                            </div>
+                            <div style={{ background:"#1e2442", borderRadius:4, height:6 }}>
+                              <div style={{ width:pct+"%", background:"linear-gradient(90deg,#FF922B,#FFD93D)", borderRadius:4, height:"100%", transition:"width 0.4s ease" }} />
+                            </div>
+                            <div style={{ fontSize:9, color:"#6a7aaa", marginTop:4 }}>{totalAdv2>0?((r/totalAdv2)*100).toFixed(1):0}% of total advances</div>
+                          </div>
+                        );
+                      })}
+
+                      <div style={{ fontSize:11, fontWeight:700, color:"#6a7aaa", letterSpacing:1, margin:"14px 0 8px" }}>📄 ALL ENTRIES</div>
+                    </>
+                  );
+                })()}
+
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
                   <span style={{ fontSize:12, color:"#6a7aaa" }}>{displayAdvances.length} advance{displayAdvances.length!==1?"s":""} · {fmt(totalAdv2)}</span>
                   {can.canEdit && <button onClick={openAddAdvance} style={{ background:"linear-gradient(135deg,#FFD93D,#FF922B)", border:"none", borderRadius:10, padding:"7px 15px", color:"#fff", fontSize:12, cursor:"pointer", fontWeight:700, fontFamily:"Poppins,sans-serif" }}>+ Add</button>}
