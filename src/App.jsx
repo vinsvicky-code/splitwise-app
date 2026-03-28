@@ -984,7 +984,94 @@ export default function SplitApp() {
             {/* BALANCES */}
             {tab==="balances" && (
               <div>
-                <div style={{ fontSize:11, color:"#3a4470", marginBottom:12, background:"#13172a", borderRadius:10, padding:"8px 12px" }}>⚖️ Includes expenses + advances · Green = gets back · Red = owes</div>
+                {/* ── Who Spent What ── */}
+                {totalSpent2 > 0 && (() => {
+                  // amount each person actually consumed (their share of each expense)
+                  const consumed = {};
+                  const paid = {};
+                  displayMembers.forEach(m => { consumed[m.name] = 0; paid[m.name] = 0; });
+                  displayExpenses.forEach(exp => {
+                    paid[exp.paidBy] = (paid[exp.paidBy]||0) + exp.amount;
+                    if (exp.splitMode === "unequal" && exp.customAmounts) {
+                      Object.entries(exp.customAmounts).forEach(([name, amt]) => {
+                        consumed[name] = (consumed[name]||0) + parseFloat(amt||0);
+                      });
+                    } else {
+                      const per = exp.amount / (exp.splitAmong?.length||1);
+                      (exp.splitAmong||[]).forEach(name => { consumed[name] = (consumed[name]||0) + per; });
+                    }
+                  });
+                  const maxConsumed = Math.max(...Object.values(consumed), 1);
+                  const maxPaid     = Math.max(...Object.values(paid), 1);
+                  return (
+                    <>
+                      {/* Summary cards */}
+                      <div style={{ display:"flex", gap:7, marginBottom:14 }}>
+                        {[
+                          { label:"Total Spent",   value:fmt(totalSpent2),                  color:"#FFD93D", icon:"🧾" },
+                          { label:"Avg per person", value:fmt(totalSpent2/(displayMembers.length||1)), color:"#4D96FF", icon:"👤" },
+                        ].map((s,i) => (
+                          <div key={i} style={{ flex:1, background:"#13172a", border:"1px solid #1e2442", borderRadius:12, padding:"10px 12px", textAlign:"center" }}>
+                            <div style={{ fontSize:18, marginBottom:4 }}>{s.icon}</div>
+                            <div style={{ fontSize:13, fontWeight:800, color:s.color }}>{s.value}</div>
+                            <div style={{ fontSize:9, color:"#6a7aaa", marginTop:2 }}>{s.label}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Who paid (fronted money) */}
+                      <div style={{ fontSize:11, fontWeight:700, color:"#6a7aaa", letterSpacing:1, marginBottom:8 }}>💳 WHO PAID (FRONTED)</div>
+                      {displayMembers.map((m,i) => {
+                        const p = paid[m.name]||0;
+                        const pct = maxPaid > 0 ? (p/maxPaid)*100 : 0;
+                        return (
+                          <div key={i} style={{ background:"#13172a", border:"1px solid #1e2442", borderRadius:12, padding:"10px 12px", marginBottom:7 }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:7 }}>
+                              <Av name={m.name} photo={m.photo} members={displayMembers} size={30} />
+                              <span style={{ flex:1, fontSize:12, fontWeight:700 }}>{m.name}{m.uid===user?.uid?" (you)":""}</span>
+                              <span style={{ fontSize:13, fontWeight:800, color:"#FFD93D" }}>{fmt(p)}</span>
+                            </div>
+                            <div style={{ background:"#1e2442", borderRadius:4, height:6 }}>
+                              <div style={{ width:pct+"%", background:`linear-gradient(90deg,${mColor(m.name,displayMembers)},${mColor(m.name,displayMembers)}99)`, borderRadius:4, height:"100%", transition:"width 0.4s ease" }} />
+                            </div>
+                            <div style={{ fontSize:9, color:"#6a7aaa", marginTop:4 }}>{totalSpent2>0?((p/totalSpent2)*100).toFixed(1):0}% of total</div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Who consumed */}
+                      <div style={{ fontSize:11, fontWeight:700, color:"#6a7aaa", letterSpacing:1, margin:"14px 0 8px" }}>🍽️ WHO CONSUMED (ACTUAL SHARE)</div>
+                      {displayMembers.map((m,i) => {
+                        const c = consumed[m.name]||0;
+                        const p = paid[m.name]||0;
+                        const pct = maxConsumed > 0 ? (c/maxConsumed)*100 : 0;
+                        const diff = p - c; // positive = overpaid, negative = underpaid
+                        return (
+                          <div key={i} style={{ background:"#13172a", border:"1px solid #1e2442", borderRadius:12, padding:"10px 12px", marginBottom:7 }}>
+                            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:7 }}>
+                              <Av name={m.name} photo={m.photo} members={displayMembers} size={30} />
+                              <div style={{ flex:1 }}>
+                                <div style={{ fontSize:12, fontWeight:700 }}>{m.name}{m.uid===user?.uid?" (you)":""}</div>
+                                <div style={{ fontSize:9, color: diff>0.01?"#2ed573":diff<-0.01?"#ff4757":"#6a7aaa", marginTop:1 }}>
+                                  {diff>0.01?"overpaid "+fmt(diff):diff<-0.01?"underpaid "+fmt(Math.abs(diff)):"even ✓"}
+                                </div>
+                              </div>
+                              <span style={{ fontSize:13, fontWeight:800, color:"#4D96FF" }}>{fmt(c)}</span>
+                            </div>
+                            <div style={{ background:"#1e2442", borderRadius:4, height:6 }}>
+                              <div style={{ width:pct+"%", background:`linear-gradient(90deg,#4D96FF,#6C63FF)`, borderRadius:4, height:"100%", transition:"width 0.4s ease" }} />
+                            </div>
+                            <div style={{ fontSize:9, color:"#6a7aaa", marginTop:4 }}>{totalSpent2>0?((c/totalSpent2)*100).toFixed(1):0}% of total</div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  );
+                })()}
+
+                {/* ── Net Balance ── */}
+                <div style={{ fontSize:11, fontWeight:700, color:"#6a7aaa", letterSpacing:1, margin:"14px 0 8px" }}>⚖️ NET BALANCE (WHO OWES WHOM)</div>
+                <div style={{ fontSize:10, color:"#3a4470", marginBottom:10, background:"#13172a", borderRadius:8, padding:"6px 10px" }}>Includes expenses + advances · Green = gets back · Red = owes</div>
                 {displayMembers.map((m,i) => {
                   const bal = balances2[m.name]||0;
                   const isOwed=bal>0.01, owes=bal<-0.01;
@@ -1001,17 +1088,19 @@ export default function SplitApp() {
                     </div>
                   );
                 })}
+
+                {/* ── By Category ── */}
                 {totalSpent2>0 && (
                   <>
-                    <div style={{ marginTop:14, marginBottom:7, fontSize:12, color:"#6a7aaa" }}>By category</div>
+                    <div style={{ fontSize:11, fontWeight:700, color:"#6a7aaa", letterSpacing:1, margin:"14px 0 8px" }}>🏷️ BY CATEGORY</div>
                     {CATEGORIES.map(cat => {
                       const total = displayExpenses.filter(e=>e.category===cat.id).reduce((s,e)=>s+e.amount,0);
                       if (!total) return null;
                       return (
-                        <div key={cat.id} style={{ marginBottom:7 }}>
-                          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
+                        <div key={cat.id} style={{ background:"#13172a", borderRadius:10, padding:"9px 12px", marginBottom:6 }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:5 }}>
                             <span style={{ fontSize:11 }}>{cat.icon} {cat.label}</span>
-                            <span style={{ fontSize:11, fontWeight:700, color:"#FFD93D" }}>{fmt(total)}</span>
+                            <span style={{ fontSize:11, fontWeight:700, color:"#FFD93D" }}>{fmt(total)} <span style={{ color:"#3a4470", fontWeight:400 }}>({((total/totalSpent2)*100).toFixed(0)}%)</span></span>
                           </div>
                           <div style={{ background:"#1e2442", borderRadius:4, height:5 }}>
                             <div style={{ width:((total/totalSpent2)*100)+"%", background:"linear-gradient(90deg,#4D96FF,#6C63FF)", borderRadius:4, height:"100%" }} />
@@ -1020,6 +1109,13 @@ export default function SplitApp() {
                       );
                     })}
                   </>
+                )}
+
+                {totalSpent2===0 && (
+                  <div style={{ textAlign:"center", padding:"40px 0", color:"#3a4470" }}>
+                    <div style={{ fontSize:42, marginBottom:10 }}>⚖️</div>
+                    <div style={{ fontSize:13, fontWeight:600 }}>Add expenses to see balances</div>
+                  </div>
                 )}
               </div>
             )}
